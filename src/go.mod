@@ -1,4 +1,4 @@
-module hide
+module github.com/andresmejia3/hide
 
 go 1.15
 
