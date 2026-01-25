@@ -1,11 +1,11 @@
 package stego
 
 import (
+	"bufio"
 	"image"
 	"image/color"
 	_ "image/gif"
 	_ "image/jpeg"
-	"io"
 	"math"
 	"os"
 )
@@ -92,7 +92,7 @@ func clearBitUint8(num uint8, index int) uint8 {
 	return num & mask
 }
 
-func matchBitUint8(num uint8, index int, bit int, rng io.ByteReader) (uint8, error) {
+func matchBitUint8(num uint8, index int, bit int, rng *bufio.Reader) (uint8, error) {
 	// LSB Matching only applies to the least significant bit (index 0).
 	// For other bits, we fall back to standard replacement.
 	if index != 0 {

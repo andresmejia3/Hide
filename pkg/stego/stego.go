@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"image"
 	"image/png"
-	"io"
 	"math"
 	"os"
 
@@ -107,13 +106,13 @@ func Conceal(args *ConcealArgs) error {
 		return fmt.Errorf("failed to apply Reed-Solomon encoding: %v", err)
 	}
 
+	totalBitsInImage := numBitsAvailable(width, height, 4, 8)
+	numBitsToEncodeNumMessageBits := int(math.Ceil(math.Log2(float64(totalBitsInImage))))
 	totalBitsToBeWritten := len(messageBytes) * 8
 	stepper := makeImageStepper(*args.NumBitsPerChannel, width, height, *args.NumChannels, totalBitsToBeWritten+numBitsToEncodeNumMessageBits, stepperSeed)
 	outputImage := copyImage(img)
-	totalBitsInImage := numBitsAvailable(width, height, 4, 8)
 	pixels := outputImage.Pix
 
-	numBitsToEncodeNumMessageBits := int(math.Ceil(math.Log2(float64(totalBitsInImage))))
 	totalBitsAvailable := numBitsAvailable(width, height, *args.NumChannels, *args.NumBitsPerChannel)
 
 	if *args.Verbose {
@@ -287,7 +286,7 @@ func Conceal(args *ConcealArgs) error {
 }
 
 func concealBodyLSB(img *image.NRGBA, stepper *ImageStepper, message []byte, matching bool, bar *progressbar.ProgressBar) error {
-	var rng io.ByteReader
+	var rng *bufio.Reader
 	if matching {
 		rng = bufio.NewReader(rand.Reader)
 	}
@@ -321,10 +320,10 @@ func concealBodyLSB(img *image.NRGBA, stepper *ImageStepper, message []byte, mat
 	return nil
 }
 
-func Reveal(args *RevealArgs) error {
+func Reveal(args *RevealArgs) ([]byte, error) {
 	imgRaw, err := loadImage(*args.ImagePath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Convert to NRGBA to ensure consistent pixel access and avoid type assertion panics
 	img := copyImage(imgRaw)
@@ -336,7 +335,7 @@ func Reveal(args *RevealArgs) error {
 	numBitsToUsePerChannel := 0
 
 	if width*height < 35 {
-		return errors.New("image must have at least 35 pixels (header+salt)")
+		return nil, errors.New("image must have at least 35 pixels (header+salt)")
 	}
 	numChannels := 0
 	numMessageBits := 0
@@ -392,10 +391,10 @@ func Reveal(args *RevealArgs) error {
 
 	// Validate header data to prevent panics on non-stego images
 	if numChannels < 1 || numChannels > 4 {
-		return fmt.Errorf("invalid header: detected %d channels (must be 1-4)", numChannels)
+		return nil, fmt.Errorf("invalid header: detected %d channels (must be 1-4)", numChannels)
 	}
 	if numBitsToUsePerChannel < 1 || numBitsToUsePerChannel > 8 {
-		return fmt.Errorf("invalid header: detected %d bits per channel (must be 1-8)", numBitsToUsePerChannel)
+		return nil, fmt.Errorf("invalid header: detected %d bits per channel (must be 1-8)", numBitsToUsePerChannel)
 	}
 
 	if *args.Verbose {
@@ -445,7 +444,7 @@ func Reveal(args *RevealArgs) error {
 		}
 
 		if err := stepper.step(); err != nil {
-			return err
+			return nil, err
 		}
 	}
 
@@ -453,7 +452,7 @@ func Reveal(args *RevealArgs) error {
 	var capacity int
 	if *args.Strategy == "dct" {
 		if width < 9 {
-			return errors.New("image width must be at least 9 pixels for DCT strategy to fit header")
+			return nil, errors.New("image width must be at least 9 pixels for DCT strategy to fit header")
 		}
 		capacity = (width / 8) * ((height / 8) - 1)
 	} else {
@@ -465,10 +464,10 @@ func Reveal(args *RevealArgs) error {
 	}
 
 	if numMessageBits < 0 || numMessageBits > capacity {
-		return fmt.Errorf("invalid header: message length %d exceeds capacity %d", numMessageBits, capacity)
+		return nil, fmt.Errorf("invalid header: message length %d exceeds capacity %d", numMessageBits, capacity)
 	}
 	if numMessageBits%8 != 0 {
-		return fmt.Errorf("invalid header: message length %d is not a multiple of 8", numMessageBits)
+		return nil, fmt.Errorf("invalid header: message length %d is not a multiple of 8", numMessageBits)
 	}
 
 	if *args.Verbose {
@@ -497,7 +496,7 @@ func Reveal(args *RevealArgs) error {
 				blockY++
 			}
 			if blockY*8+8 > height {
-				return errors.New("image too small for DCT message")
+				return nil, errors.New("image too small for DCT message")
 			}
 
 			if decodeDCTBlock(img, blockX, blockY) != 0 {
@@ -531,7 +530,7 @@ func Reveal(args *RevealArgs) error {
 			}
 
 			if err := stepper.step(); err != nil {
-				return err
+				return nil, err
 			}
 		}
 	}
@@ -539,35 +538,30 @@ func Reveal(args *RevealArgs) error {
 	// Recover data using Reed-Solomon
 	recoveredBytes, err := removeReedSolomon(messageBytes)
 	if err != nil {
-		return fmt.Errorf("Reed-Solomon reconstruction failed: %v", err)
+		return nil, fmt.Errorf("Reed-Solomon reconstruction failed: %v", err)
 	}
 
-	var message string
+	var finalBytes []byte
 
 	if *args.Passphrase != "" {
 		decrypted, err := decrypt(recoveredBytes, *args.Passphrase, salt)
 		if err != nil {
-			return fmt.Errorf("failed to decrypt message: %v", err)
+			return nil, fmt.Errorf("failed to decrypt message: %v", err)
 		}
-		message = string(decrypted)
+		finalBytes = decrypted
 
 	} else if *args.PrivateKeyPath != "" {
 		decryptedBytes, err := decryptRSA(recoveredBytes, *args.PrivateKeyPath)
 		if err != nil {
-			return fmt.Errorf("RSA decryption failed: %v", err)
+			return nil, fmt.Errorf("RSA decryption failed: %v", err)
 		}
-		message = string(decryptedBytes)
+		finalBytes = decryptedBytes
 
 	} else {
-		message = string(recoveredBytes)
+		finalBytes = recoveredBytes
 	}
 
-	if args.Output != nil && *args.Output != "" {
-		return os.WriteFile(*args.Output, []byte(message), 0644)
-	} else {
-		fmt.Println(message)
-	}
-	return nil
+	return finalBytes, nil
 }
 
 func embedDCTBlock(img *image.NRGBA, blockX, blockY int, bit int) {

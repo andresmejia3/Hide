@@ -125,8 +125,8 @@ func (self *ImageStepper) step() error {
 		self.channel = 0
 		// Move to next pixel
 		x, y, ok := self.iterator.next()
-		if !ok && self.numBitsWritten < self.totalBitsToBeWritten {
-			return errors.New("more steps taken than pixels in the image")
+		if !ok {
+			return errors.New("iterator exhausted: stepped past the last available pixel")
 		}
 		self.x = x
 		self.y = y

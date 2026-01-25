@@ -1,10 +1,8 @@
 package stego
 
 import (
-	"bytes"
 	"image"
 	"image/png"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,11 +61,6 @@ func TestEndToEndSteganography(t *testing.T) {
 	}
 
 	// 5. Run Reveal
-	// Reveal prints to stdout, so we need to capture it to verify the message
-	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
 	rArgs := &RevealArgs{
 		ImagePath:      &outputPath,
 		Passphrase:     &passphrase,
@@ -75,16 +68,12 @@ func TestEndToEndSteganography(t *testing.T) {
 		Encoding:       &encoding,
 		PrivateKeyPath: new(string), // Empty string
 		Strategy:       &strategy,
+		Output:         new(string), // Not used in test, but required by struct
 	}
 
-	err = Reveal(rArgs)
+	revealedBytes, err := Reveal(rArgs)
 
-	w.Close()
-	os.Stdout = oldStdout // Restore stdout
-
-	var buf bytes.Buffer
-	io.Copy(&buf, r)
-	output := strings.TrimSpace(buf.String())
+	output := string(revealedBytes)
 
 	if err != nil {
 		t.Fatalf("Reveal failed: %v", err)
@@ -147,10 +136,6 @@ func TestEndToEndSteganographyRSA(t *testing.T) {
 	}
 
 	// 6. Run Reveal
-	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
 	rArgs := &RevealArgs{
 		ImagePath:      &outputPath,
 		Passphrase:     &emptyPass,
@@ -158,16 +143,11 @@ func TestEndToEndSteganographyRSA(t *testing.T) {
 		Encoding:       &encoding,
 		PrivateKeyPath: &privKeyPath,
 		Strategy:       &strategy,
+		Output:         new(string),
 	}
 
-	err := Reveal(rArgs)
-
-	w.Close()
-	os.Stdout = oldStdout
-
-	var buf bytes.Buffer
-	io.Copy(&buf, r)
-	output := strings.TrimSpace(buf.String())
+	revealedBytes, err := Reveal(rArgs)
+	output := strings.TrimSpace(string(revealedBytes))
 
 	if err != nil {
 		t.Fatalf("Reveal RSA failed: %v", err)
@@ -225,16 +205,8 @@ func TestWrongPassword(t *testing.T) {
 		Strategy:       &strategy,
 	}
 
-	// Capture stdout to prevent pollution, though we expect error
-	oldStdout := os.Stdout
-	r, w, _ := os.Pipe()
-	os.Stdout = w
-
-	err := Reveal(rArgs)
-
-	w.Close()
-	os.Stdout = oldStdout
-	io.Copy(io.Discard, r)
+	// We expect an error, so we don't need the revealed bytes
+	_, err := Reveal(rArgs)
 
 	if err == nil {
 		t.Error("Expected error when revealing with wrong password, got nil")
@@ -282,12 +254,20 @@ func TestEndToEndSteganographyDCT(t *testing.T) {
 		t.Fatalf("Conceal DCT failed: %v", err)
 	}
 
-	// Reuse args for reveal
 	rArgs := &RevealArgs{ImagePath: &outputPath, Passphrase: &passphrase, Verbose: &verbose, Encoding: &encoding, PrivateKeyPath: new(string), Strategy: &strategy}
 
-	// We can't easily capture stdout here without pipe boilerplate, but if Reveal fails it returns error
-	// For a unit test, checking for error is the baseline.
-	if err := Reveal(rArgs); err != nil {
+	revealedBytes, err := Reveal(rArgs)
+	if err != nil {
 		t.Fatalf("Reveal DCT failed: %v", err)
+	}
+
+	output := string(revealedBytes)
+
+	if err != nil {
+		t.Fatalf("Reveal DCT failed: %v", err)
+	}
+
+	if output != message {
+		t.Errorf("Revealed DCT message did not match.\nExpected: %q\nGot:      %q", message, output)
 	}
 }

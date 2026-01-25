@@ -1,6 +1,9 @@
 package main
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/andresmejia3/hide/pkg/stego"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -33,8 +36,17 @@ var revealCmd = &cobra.Command{
 			Output:         &rOut,
 		}
 
-		if err := stego.Reveal(rArgs); err != nil {
+		revealedBytes, err := stego.Reveal(rArgs)
+		if err != nil {
 			log.Fatal().Err(err).Msg("Failed to reveal message")
+		}
+
+		if rOut != "" {
+			if err := os.WriteFile(rOut, revealedBytes, 0644); err != nil {
+				log.Fatal().Err(err).Msg("Failed to write revealed message to output file")
+			}
+		} else {
+			fmt.Println(string(revealedBytes))
 		}
 	},
 }

@@ -13,19 +13,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"golang.org/x/crypto/pbkdf2"
 )
 
 func createHash(key string, salt []byte) []byte {
-	// Use a simple PBKDF2-like approach with the provided salt
-	iterations := 100000
-	hasher := sha256.New()
-	result := []byte(key)
-	for i := 0; i < iterations; i++ {
-		hasher.Write(append(result, salt...))
-		result = hasher.Sum(nil)
-		hasher.Reset()
-	}
-	return result
+	// Use the standard PBKDF2 key derivation function.
+	// 32 bytes for AES-256.
+	return pbkdf2.Key([]byte(key), salt, 100000, 32, sha256.New)
 }
 
 func encrypt(data []byte, passphrase string, salt []byte) ([]byte, error) {
