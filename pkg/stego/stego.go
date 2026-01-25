@@ -16,6 +16,7 @@ type ConcealArgs struct {
 	Passphrase        *string
 	PublicKeyPath     *string
 	Message           *string
+	File              *string
 	Output            *string
 	NumBitsPerChannel *int
 	Encoding          *string
@@ -47,7 +48,16 @@ func Conceal(args *ConcealArgs) error {
 	width := img.Bounds().Max.X
 	height := img.Bounds().Max.Y
 
-	messageBytes := []byte(*args.Message)
+	var messageBytes []byte
+	if args.File != nil && *args.File != "" {
+		var err error
+		messageBytes, err = os.ReadFile(*args.File)
+		if err != nil {
+			return fmt.Errorf("failed to read input file: %v", err)
+		}
+	} else {
+		messageBytes = []byte(*args.Message)
+	}
 
 	var seed int64
 	if *args.Passphrase != "" {

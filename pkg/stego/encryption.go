@@ -16,9 +16,18 @@ import (
 )
 
 func createHash(key string) []byte {
+	// Use a simple PBKDF2-like approach with a static salt and high iteration count.
+	// In a production system, we would store a random salt in the image header.
+	salt := []byte("HideProjectStaticSalt")
+	iterations := 100000
 	hasher := sha256.New()
-	hasher.Write([]byte(key))
-	return hasher.Sum(nil)
+	result := []byte(key)
+	for i := 0; i < iterations; i++ {
+		hasher.Write(append(result, salt...))
+		result = hasher.Sum(nil)
+		hasher.Reset()
+	}
+	return result
 }
 
 func encrypt(data []byte, passphrase string) ([]byte, error) {

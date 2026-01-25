@@ -11,6 +11,7 @@ var (
 	cPass     string
 	cKey      string
 	cMsg      string
+	cFile     string
 	cOut      string
 	cBits     int
 	cEncoding string
@@ -37,6 +38,7 @@ var concealCmd = &cobra.Command{
 			Passphrase:        &cPass,
 			PublicKeyPath:     &cKey,
 			Message:           &cMsg,
+			File:              &cFile,
 			Output:            &cOut,
 			NumBitsPerChannel: &cBits,
 			Encoding:          &cEncoding,
@@ -59,7 +61,7 @@ func init() {
 	concealCmd.Flags().StringVarP(&cPass, "passphrase", "p", "", "Passphrase to encrypt the message")
 	concealCmd.Flags().StringVarP(&cKey, "key-path", "k", "", "Path to .pem file containing recipient's public key")
 	concealCmd.Flags().StringVarP(&cMsg, "message", "m", "", "Message you want to conceal (required)")
-	concealCmd.MarkFlagRequired("message")
+	concealCmd.Flags().StringVarP(&cFile, "file", "f", "", "Path to file to conceal (overrides message)")
 	concealCmd.Flags().StringVarP(&cOut, "output", "o", "", "Output path for the image")
 	concealCmd.Flags().IntVarP(&cBits, "num-bits", "n", 1, "Number of bits to use per channel value")
 	concealCmd.Flags().StringVarP(&cEncoding, "encoding", "e", "utf8", "Encoding to be used for the message")

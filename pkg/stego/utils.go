@@ -1,12 +1,12 @@
 package stego
 
 import (
+	"crypto/rand"
 	"image"
 	"image/color"
 	_ "image/gif"
 	_ "image/jpeg"
 	"math"
-	"math/rand"
 	"os"
 )
 
@@ -109,7 +109,9 @@ func matchBitUint8(num uint8, index int, bit int) uint8 {
 	}
 
 	// Randomly add or subtract 1 to flip the LSB
-	if rand.Intn(2) == 0 {
+	b := make([]byte, 1)
+	rand.Read(b)
+	if b[0]%2 == 0 {
 		val++
 	} else {
 		val--
