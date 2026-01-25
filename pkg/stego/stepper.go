@@ -5,6 +5,68 @@ import (
 	"math/rand"
 )
 
+// pixelIterator defines a strategy for traversing image pixels.
+type pixelIterator interface {
+	next() (x, y int, ok bool)
+}
+
+// linearIterator traverses pixels row by row, from top-left to bottom-right.
+type linearIterator struct {
+	width, height int
+	x, y          int
+}
+
+func newLinearIterator(width, height int) *linearIterator {
+	return &linearIterator{width: width, height: height}
+}
+
+func (it *linearIterator) next() (int, int, bool) {
+	if it.y >= it.height {
+		return 0, 0, false
+	}
+	x, y := it.x, it.y
+	it.x++
+	if it.x >= it.width {
+		it.x = 0
+		it.y++
+	}
+	return x, y, true
+}
+
+// randomIterator traverses pixels in a pseudo-random order determined by a seed.
+// It skips the first two pixels (0,0 and 0,1 or 1,0) which are reserved for metadata.
+type randomIterator struct {
+	indices []int
+	current int
+	width   int
+}
+
+func newRandomIterator(width, height int, seed int64) *randomIterator {
+	count := width * height
+	indices := make([]int, count)
+	for i := 0; i < count; i++ {
+		indices[i] = i
+	}
+
+	// Shuffle indices starting from 2 to preserve metadata pixels
+	if count > 2 {
+		r := rand.New(rand.NewSource(seed))
+		r.Shuffle(count-2, func(i, j int) {
+			indices[i+2], indices[j+2] = indices[j+2], indices[i+2]
+		})
+	}
+	return &randomIterator{indices: indices, width: width}
+}
+
+func (it *randomIterator) next() (int, int, bool) {
+	if it.current >= len(it.indices) {
+		return 0, 0, false
+	}
+	idx := it.indices[it.current]
+	it.current++
+	return idx % it.width, idx / it.width, true
+}
+
 type ImageStepper struct {
 	x                      int
 	y                      int
@@ -17,12 +79,17 @@ type ImageStepper struct {
 	channelSize            int
 	totalBitsToBeWritten   int
 
-	// New fields for randomization
-	currentPixelIndex int
-	pixelIndices      []int
+	iterator pixelIterator
 }
 
 func makeImageStepper(numBitsToUsePerChannel int, width int, height int, channelSize int, totalBitsToBeWritten int, seed int64) *ImageStepper {
+	var it pixelIterator
+	if seed != 0 {
+		it = newRandomIterator(width, height, seed)
+	} else {
+		it = newLinearIterator(width, height)
+	}
+
 	s := &ImageStepper{
 		x:                      0,
 		y:                      0,
@@ -34,26 +101,13 @@ func makeImageStepper(numBitsToUsePerChannel int, width int, height int, channel
 		height:                 height,
 		channelSize:            channelSize,
 		totalBitsToBeWritten:   totalBitsToBeWritten,
-		currentPixelIndex:      0,
+		iterator:               it,
 	}
 
-	if seed != 0 {
-		count := width * height
-		s.pixelIndices = make([]int, count)
-		for i := 0; i < count; i++ {
-			s.pixelIndices[i] = i
-		}
-
-		// Shuffle indices starting from 2 (preserve metadata pixels 0 and 1)
-		if count > 2 {
-			r := rand.New(rand.NewSource(seed))
-			r.Shuffle(count-2, func(i, j int) {
-				realI := i + 2
-				realJ := j + 2
-				s.pixelIndices[realI], s.pixelIndices[realJ] = s.pixelIndices[realJ], s.pixelIndices[realI]
-			})
-		}
-	}
+	// Prime the iterator so s.x and s.y reflect the first pixel
+	x, y, _ := s.iterator.next()
+	s.x = x
+	s.y = y
 
 	return s
 }
@@ -69,35 +123,13 @@ func (self *ImageStepper) step() error {
 
 	if self.channel >= self.channelSize {
 		self.channel = 0
-		self.currentPixelIndex++
-
-		if self.pixelIndices != nil {
-			// Random mode
-			if self.currentPixelIndex < len(self.pixelIndices) {
-				idx := self.pixelIndices[self.currentPixelIndex]
-				self.x = idx % self.width
-				self.y = idx / self.width
-			}
-		} else {
-			// Linear mode
-			self.x++
-			if self.x >= self.width {
-				self.x = 0
-				self.y++
-			}
+		// Move to next pixel
+		x, y, ok := self.iterator.next()
+		if !ok && self.numBitsWritten < self.totalBitsToBeWritten {
+			return errors.New("more steps taken than pixels in the image")
 		}
-	}
-
-	// Check bounds
-	isOutOfBounds := false
-	if self.pixelIndices != nil {
-		isOutOfBounds = self.currentPixelIndex >= len(self.pixelIndices)
-	} else {
-		isOutOfBounds = self.y >= self.height
-	}
-
-	if isOutOfBounds && self.numBitsWritten < self.totalBitsToBeWritten {
-		return errors.New("more steps taken than pixels in the image")
+		self.x = x
+		self.y = y
 	}
 
 	return nil
@@ -105,19 +137,8 @@ func (self *ImageStepper) step() error {
 
 func (self *ImageStepper) skipPixel() {
 	self.numBitsWritten += 4
-	self.currentPixelIndex++
-
-	if self.pixelIndices != nil {
-		if self.currentPixelIndex < len(self.pixelIndices) {
-			idx := self.pixelIndices[self.currentPixelIndex]
-			self.x = idx % self.width
-			self.y = idx / self.width
-		}
-	} else {
-		self.x++
-		if self.x >= self.width {
-			self.x = 0
-			self.y++
-		}
-	}
+	// Just advance the iterator
+	x, y, _ := self.iterator.next()
+	self.x = x
+	self.y = y
 }

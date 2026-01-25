@@ -11,7 +11,6 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 )
@@ -122,7 +121,7 @@ func GenerateRSAKeys(bits int, outDir string) error {
 
 func encryptRSA(data []byte, pubKeyPath string) ([]byte, error) {
 	// 1. Load Public Key
-	pubKeyBytes, err := ioutil.ReadFile(pubKeyPath)
+	pubKeyBytes, err := os.ReadFile(pubKeyPath)
 	if err != nil {
 		return nil, err
 	}
@@ -169,7 +168,7 @@ func encryptRSA(data []byte, pubKeyPath string) ([]byte, error) {
 
 func decryptRSA(data []byte, privKeyPath string) (plaintext []byte, err error) {
 	// 1. Load Private Key
-	privKeyBytes, err := ioutil.ReadFile(privKeyPath)
+	privKeyBytes, err := os.ReadFile(privKeyPath)
 	if err != nil {
 		return nil, err
 	}

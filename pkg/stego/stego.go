@@ -173,15 +173,21 @@ func Conceal(args *ConcealArgs) error {
 				dctBlock := dct2d(block)
 
 				// Embed bit in (4,4) coefficient
+				// Use a scaling factor to make the embedding robust against float->uint8 conversion noise
+				const dctScale = 10.0
 				bit := getBitUint8(encryptedByte, i)
-				val := int(dctBlock[4][4])
-				if val%2 != 0 {
-					val -= 1 // Make even
+				val := dctBlock[4][4]
+				q := int(math.Round(val / dctScale))
+
+				// Ensure q % 2 matches the bit
+				if (q%2+2)%2 != bit {
+					if val < float64(q)*dctScale {
+						q--
+					} else {
+						q++
+					}
 				}
-				if bit == 1 {
-					val += 1
-				}
-				dctBlock[4][4] = float64(val)
+				dctBlock[4][4] = float64(q) * dctScale
 
 				// IDCT
 				idctBlock := idct2d(dctBlock)
@@ -247,11 +253,12 @@ func concealBodyLSB(img *image.NRGBA, stepper *ImageStepper, message []byte, mat
 }
 
 func Reveal(args *RevealArgs) error {
-	img, err := loadImage(*args.ImagePath)
-
+	imgRaw, err := loadImage(*args.ImagePath)
 	if err != nil {
 		return err
 	}
+	// Convert to NRGBA to ensure consistent pixel access and avoid type assertion panics
+	img := copyImage(imgRaw)
 
 	var channels []uint8
 	width := img.Bounds().Max.X
@@ -348,16 +355,17 @@ func Reveal(args *RevealArgs) error {
 			baseX, baseY := blockX*8, blockY*8
 			for bx := 0; bx < 8; bx++ {
 				for by := 0; by < 8; by++ {
-					pix := getPixel(img.(*image.NRGBA), baseX+bx, baseY+by)
+					pix := getPixel(img, baseX+bx, baseY+by)
 					block[bx][by] = float64(pix[2])
 				}
 			}
 
 			// DCT
 			dctBlock := dct2d(block)
-			val := int(math.Round(dctBlock[4][4]))
+			const dctScale = 10.0
+			q := int(math.Round(dctBlock[4][4] / dctScale))
 
-			if val%2 != 0 {
+			if (q%2+2)%2 != 0 {
 				messageBytes[byteIndex] = setBitUint8(messageBytes[byteIndex], numBitsRead)
 			} else {
 				messageBytes[byteIndex] = clearBitUint8(messageBytes[byteIndex], numBitsRead)
