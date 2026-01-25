@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"image"
 	"image/png"
-	_ "image/png"
 	"math"
 	"os"
 
@@ -49,7 +48,10 @@ func Conceal(args *ConcealArgs) error {
 	messageBytes := []byte(*args.Message)
 
 	if *args.Passphrase != "" {
-		messageBytes = encrypt(messageBytes, *args.Passphrase)
+		messageBytes, err = encrypt(messageBytes, *args.Passphrase)
+		if err != nil {
+			return err
+		}
 	}
 
 	if *args.PublicKeyPath != "" {
@@ -113,8 +115,7 @@ func Conceal(args *ConcealArgs) error {
 
 	for i := 0; i < numBitsToEncodeNumMessageBits; i++ {
 		pixel := getPixel(outputImage, stepper.x, stepper.y)
-		channels := colorToChannels(img.At(stepper.x, stepper.y))
-		channelValue := channels[stepper.channel]
+		channelValue := pixel[stepper.channel]
 
 		if getBit(totalBitsToBeWritten, i) == 0 {
 			pixel[stepper.channel] = clearBitUint8(channelValue, stepper.bitIndexOffset)
@@ -133,9 +134,8 @@ func Conceal(args *ConcealArgs) error {
 
 	for _, encryptedByte := range messageBytes {
 		for i := 0; i < 8; i++ {
-			channels := colorToChannels(img.At(stepper.x, stepper.y))
-			channelValue := channels[stepper.channel]
 			pixel := getPixel(outputImage, stepper.x, stepper.y)
+			channelValue := pixel[stepper.channel]
 
 			if bit := getBitUint8(encryptedByte, i); bit == 0 {
 				pixel[stepper.channel] = clearBitUint8(channelValue, stepper.bitIndexOffset)
@@ -275,7 +275,11 @@ func Reveal(args *RevealArgs) error {
 	var message string
 
 	if *args.Passphrase != "" {
-		message = string(decrypt(messageBytes, *args.Passphrase))
+		decrypted, err := decrypt(messageBytes, *args.Passphrase)
+		if err != nil {
+			return fmt.Errorf("failed to decrypt message: %v", err)
+		}
+		message = string(decrypted)
 
 	} else if *args.PrivateKeyPath != "" {
 		decryptedBytes, err := decryptRSA(messageBytes, *args.PrivateKeyPath)

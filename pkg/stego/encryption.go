@@ -22,44 +22,50 @@ func createHash(key string) []byte {
 	return hasher.Sum(nil)
 }
 
-func encrypt(data []byte, passphrase string) []byte {
+func encrypt(data []byte, passphrase string) ([]byte, error) {
 	return encryptWithKey(data, createHash(passphrase))
 }
 
-func encryptWithKey(data []byte, key []byte) []byte {
-	block, _ := aes.NewCipher(key)
+func encryptWithKey(data []byte, key []byte) ([]byte, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		panic("Encryption Error: Failed")
+		return nil, fmt.Errorf("encryption error: failed to create GCM")
 	}
 	nonce := make([]byte, gcm.NonceSize())
 	if _, err = io.ReadFull(rand.Reader, nonce); err != nil {
-		panic(err.Error())
+		return nil, err
 	}
 	ciphertext := gcm.Seal(nonce, nonce, data, nil)
-	return ciphertext
+	return ciphertext, nil
 }
 
-func decrypt(data []byte, passphrase string) []byte {
+func decrypt(data []byte, passphrase string) ([]byte, error) {
 	return decryptWithKey(data, createHash(passphrase))
 }
 
-func decryptWithKey(data []byte, key []byte) []byte {
+func decryptWithKey(data []byte, key []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		panic(err.Error())
+		return nil, err
 	}
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		panic(err.Error())
+		return nil, err
 	}
 	nonceSize := gcm.NonceSize()
+	if len(data) < nonceSize {
+		return nil, fmt.Errorf("ciphertext too short")
+	}
 	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
 	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
-		panic(err.Error())
+		return nil, err
 	}
-	return plaintext
+	return plaintext, nil
 }
 
 func GenerateRSAKeys(bits int, outDir string) error {
@@ -146,7 +152,10 @@ func encryptRSA(data []byte, pubKeyPath string) ([]byte, error) {
 	}
 
 	// 4. Encrypt the actual data with the AES Key
-	encryptedData := encryptWithKey(data, aesKey)
+	encryptedData, err := encryptWithKey(data, aesKey)
+	if err != nil {
+		return nil, err
+	}
 
 	// 5. Combine: [Length of Encrypted Key (4 bytes)] + [Encrypted Key] + [Encrypted Data]
 	// We need the length because RSA key size might vary (2048 vs 4096 bits)
@@ -158,7 +167,7 @@ func encryptRSA(data []byte, pubKeyPath string) ([]byte, error) {
 	return payload, nil
 }
 
-func decryptRSA(data []byte, privKeyPath string) ([]byte, error) {
+func decryptRSA(data []byte, privKeyPath string) (plaintext []byte, err error) {
 	// 1. Load Private Key
 	privKeyBytes, err := ioutil.ReadFile(privKeyPath)
 	if err != nil {
@@ -192,14 +201,9 @@ func decryptRSA(data []byte, privKeyPath string) ([]byte, error) {
 	}
 
 	// 4. Decrypt Data with AES Key
-	// Note: decryptWithKey currently panics on error, ideally we should refactor to return error
-	// but for now we wrap in a recover or assume integrity check passes if RSA succeeded.
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("decryption failed: %v", r)
-		}
-	}()
-
-	plaintext := decryptWithKey(encryptedData, aesKey)
+	plaintext, err = decryptWithKey(encryptedData, aesKey)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt data: %v", err)
+	}
 	return plaintext, nil
 }
