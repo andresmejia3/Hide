@@ -136,7 +136,6 @@ func (self *ImageStepper) step() error {
 }
 
 func (self *ImageStepper) skipPixel() {
-	self.numBitsWritten += 4
 	// Just advance the iterator
 	x, y, _ := self.iterator.next()
 	self.x = x

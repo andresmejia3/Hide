@@ -110,7 +110,9 @@ func matchBitUint8(num uint8, index int, bit int) uint8 {
 
 	// Randomly add or subtract 1 to flip the LSB
 	b := make([]byte, 1)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic(err)
+	}
 	if b[0]%2 == 0 {
 		val++
 	} else {

@@ -120,8 +120,14 @@ func Conceal(args *ConcealArgs) error {
 	capacity := totalBitsAvailable
 	if *args.Strategy == "dct" {
 		// 1 bit per 8x8 block
+		if width < 8 {
+			return errors.New("image width must be at least 8 pixels for DCT strategy")
+		}
 		// We skip the first row of blocks (blockY=0) to reserve space for the header
 		capacity = (width / 8) * ((height / 8) - 1)
+	} else {
+		// Subtract reserved pixels (35 pixels * channels * bitsPerChannel)
+		capacity -= 35 * *args.NumChannels * *args.NumBitsPerChannel
 	}
 	if capacity < totalBitsToBeWritten {
 		return errors.New("image is not large enough to hide a message")
@@ -281,6 +287,7 @@ func Conceal(args *ConcealArgs) error {
 	if err != nil {
 		return err
 	}
+	defer file.Close()
 
 	err = png.Encode(file, outputImage)
 	if err != nil {
@@ -332,6 +339,10 @@ func Reveal(args *RevealArgs) error {
 	width := img.Bounds().Max.X
 	height := img.Bounds().Max.Y
 	numBitsToUsePerChannel := 0
+
+	if width*height < 35 {
+		return errors.New("image must have at least 35 pixels (header+salt)")
+	}
 	numChannels := 0
 	numMessageBits := 0
 
@@ -445,10 +456,14 @@ func Reveal(args *RevealArgs) error {
 	// Validate message length against capacity
 	var capacity int
 	if *args.Strategy == "dct" {
+		if width < 8 {
+			return errors.New("image width must be at least 8 pixels for DCT strategy")
+		}
 		capacity = (width / 8) * ((height / 8) - 1)
 	} else {
 		// LSB capacity (approximate check, stepper handles exact bounds)
 		capacity = numBitsAvailable(width, height, numChannels, numBitsToUsePerChannel)
+		capacity -= 35 * numChannels * numBitsToUsePerChannel
 	}
 	if numMessageBits < 0 || numMessageBits > capacity {
 		return fmt.Errorf("invalid header: message length %d exceeds capacity %d", numMessageBits, capacity)

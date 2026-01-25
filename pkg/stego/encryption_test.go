@@ -10,12 +10,13 @@ import (
 func TestSymmetricEncryption(t *testing.T) {
 	passphrase := "supersecret"
 	message := []byte("Hello, World!")
+	salt := []byte("randomsalt123456")
 
-	encrypted, err := encrypt(message, passphrase)
+	encrypted, err := encrypt(message, passphrase, salt)
 	if err != nil {
 		t.Fatalf("Encryption failed: %v", err)
 	}
-	decrypted, err := decrypt(encrypted, passphrase)
+	decrypted, err := decrypt(encrypted, passphrase, salt)
 	if err != nil {
 		t.Fatalf("Decryption failed: %v", err)
 	}
