@@ -47,11 +47,13 @@ func Conceal(args *ConcealArgs) error {
 
 	messageBytes := []byte(*args.Message)
 
+	var seed int64
 	if *args.Passphrase != "" {
 		messageBytes, err = encrypt(messageBytes, *args.Passphrase)
 		if err != nil {
 			return err
 		}
+		seed = getSeed(*args.Passphrase)
 	}
 
 	if *args.PublicKeyPath != "" {
@@ -62,7 +64,7 @@ func Conceal(args *ConcealArgs) error {
 	}
 
 	totalBitsToBeWritten := len(messageBytes) * 8
-	stepper := makeImageStepper(*args.NumBitsPerChannel, width, height, *args.NumChannels, totalBitsToBeWritten)
+	stepper := makeImageStepper(*args.NumBitsPerChannel, width, height, *args.NumChannels, totalBitsToBeWritten, seed)
 	outputImage := copyImage(img)
 	totalBitsInImage := numBitsAvailable(width, height, 4, 8)
 	pixels := outputImage.Pix
@@ -218,7 +220,12 @@ func Reveal(args *RevealArgs) error {
 		log.Debug().Int("channels", numChannels).Msg("Decoded number of channels")
 	}
 
-	stepper := makeImageStepper(numBitsToUsePerChannel, width, height, numChannels, 0)
+	var seed int64
+	if *args.Passphrase != "" {
+		seed = getSeed(*args.Passphrase)
+	}
+
+	stepper := makeImageStepper(numBitsToUsePerChannel, width, height, numChannels, 0, seed)
 	stepper.skipPixel()
 	stepper.skipPixel()
 

@@ -207,3 +207,11 @@ func decryptRSA(data []byte, privKeyPath string) (plaintext []byte, err error) {
 	}
 	return plaintext, nil
 }
+
+func getSeed(passphrase string) int64 {
+	if passphrase == "" {
+		return 0
+	}
+	hash := sha256.Sum256([]byte(passphrase))
+	return int64(binary.BigEndian.Uint64(hash[:8]))
+}

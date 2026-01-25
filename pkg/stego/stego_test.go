@@ -106,7 +106,7 @@ func TestEndToEndSteganographyRSA(t *testing.T) {
 	privKeyPath := filepath.Join(tmpDir, "private.pem")
 
 	// 3. Create dummy image
-	img := image.NewNRGBA(image.Rect(0, 0, 100, 100))
+	img := image.NewNRGBA(image.Rect(0, 0, 100, 99))
 	for i := 0; i < len(img.Pix); i++ {
 		img.Pix[i] = uint8(i % 255)
 	}

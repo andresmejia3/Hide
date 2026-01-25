@@ -11,7 +11,7 @@ func TestImageStepper(t *testing.T) {
 	bitsPerChannel := 1
 	totalBits := 12
 
-	stepper := makeImageStepper(bitsPerChannel, width, height, channels, totalBits)
+	stepper := makeImageStepper(bitsPerChannel, width, height, channels, totalBits, 0)
 
 	// Test Initial State
 	if stepper.x != 0 || stepper.y != 0 || stepper.channel != 0 {
@@ -50,7 +50,7 @@ func TestImageStepper(t *testing.T) {
 
 func TestImageStepperOverflow(t *testing.T) {
 	// 2x1 image, 1 channel, 1 bit per channel. Capacity = 2 bits.
-	stepper := makeImageStepper(1, 2, 1, 1, 10) // Trying to write 10 bits
+	stepper := makeImageStepper(1, 2, 1, 1, 10, 0) // Trying to write 10 bits
 
 	// Step once (ok)
 	if err := stepper.step(); err != nil {
