@@ -3,6 +3,10 @@ package stego
 import (
 	"image"
 	"image/color"
+	_ "image/gif"
+	_ "image/jpeg"
+	"math"
+	"math/rand"
 	"os"
 )
 
@@ -89,4 +93,92 @@ func setBitUint8(num uint8, index int) uint8 {
 func clearBitUint8(num uint8, index int) uint8 {
 	mask := uint8(^(1 << index))
 	return num & mask
+}
+
+func matchBitUint8(num uint8, index int, bit int) uint8 {
+	// LSB Matching only applies to the least significant bit (index 0).
+	// For other bits, we fall back to standard replacement.
+	if index != 0 {
+		if bit == 0 {
+			return clearBitUint8(num, index)
+		}
+		return setBitUint8(num, index)
+	}
+
+	val := int(num)
+	currentBit := val & 1
+	if currentBit == bit {
+		return num
+	}
+
+	// Randomly add or subtract 1 to flip the LSB
+	if rand.Intn(2) == 0 {
+		val++
+	} else {
+		val--
+	}
+
+	// Handle boundary conditions
+	if val > 255 {
+		val = 254 // 255 -> 254 flips LSB (1 -> 0)
+	} else if val < 0 {
+		val = 1 // 0 -> 1 flips LSB (0 -> 1)
+	}
+
+	return uint8(val)
+}
+
+// DCT Helpers
+const blockSize = 8
+
+func dct2d(block [blockSize][blockSize]float64) [blockSize][blockSize]float64 {
+	var dct [blockSize][blockSize]float64
+	c1 := math.Pi / (2.0 * blockSize)
+
+	for u := 0; u < blockSize; u++ {
+		for v := 0; v < blockSize; v++ {
+			sum := 0.0
+			for x := 0; x < blockSize; x++ {
+				for y := 0; y < blockSize; y++ {
+					sum += block[x][y] * math.Cos(float64(2*x+1)*float64(u)*c1) * math.Cos(float64(2*y+1)*float64(v)*c1)
+				}
+			}
+			alphaU := 1.0
+			if u == 0 {
+				alphaU = 1.0 / math.Sqrt(2)
+			}
+			alphaV := 1.0
+			if v == 0 {
+				alphaV = 1.0 / math.Sqrt(2)
+			}
+			dct[u][v] = 0.25 * alphaU * alphaV * sum
+		}
+	}
+	return dct
+}
+
+func idct2d(dct [blockSize][blockSize]float64) [blockSize][blockSize]float64 {
+	var block [blockSize][blockSize]float64
+	c1 := math.Pi / (2.0 * blockSize)
+
+	for x := 0; x < blockSize; x++ {
+		for y := 0; y < blockSize; y++ {
+			sum := 0.0
+			for u := 0; u < blockSize; u++ {
+				for v := 0; v < blockSize; v++ {
+					alphaU := 1.0
+					if u == 0 {
+						alphaU = 1.0 / math.Sqrt(2)
+					}
+					alphaV := 1.0
+					if v == 0 {
+						alphaV = 1.0 / math.Sqrt(2)
+					}
+					sum += alphaU * alphaV * dct[u][v] * math.Cos(float64(2*x+1)*float64(u)*c1) * math.Cos(float64(2*y+1)*float64(v)*c1)
+				}
+			}
+			block[x][y] = 0.25 * sum
+		}
+	}
+	return block
 }

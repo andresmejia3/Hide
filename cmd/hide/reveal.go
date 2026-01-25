@@ -11,6 +11,7 @@ var (
 	rPass     string
 	rKey      string
 	rEncoding string
+	rStrategy string
 )
 
 var revealCmd = &cobra.Command{
@@ -27,6 +28,7 @@ var revealCmd = &cobra.Command{
 			PrivateKeyPath: &rKey,
 			Encoding:       &rEncoding,
 			Verbose:        &verbose,
+			Strategy:       &rStrategy,
 		}
 
 		if err := stego.Reveal(rArgs); err != nil {
@@ -43,4 +45,5 @@ func init() {
 	revealCmd.Flags().StringVarP(&rPass, "passphrase", "p", "", "Passphrase to decrypt the message")
 	revealCmd.Flags().StringVarP(&rKey, "key-path", "k", "", "Path to .pem file containing your private key")
 	revealCmd.Flags().StringVarP(&rEncoding, "encoding", "e", "utf8", "Encoding used to conceal message")
+	revealCmd.Flags().StringVarP(&rStrategy, "strategy", "s", "dct", "Steganography strategy: lsb, lsb-matching, dct")
 }

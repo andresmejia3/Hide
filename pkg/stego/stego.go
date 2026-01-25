@@ -21,6 +21,7 @@ type ConcealArgs struct {
 	Encoding          *string
 	NumChannels       *int
 	Verbose           *bool
+	Strategy          *string
 }
 
 type RevealArgs struct {
@@ -29,6 +30,7 @@ type RevealArgs struct {
 	PrivateKeyPath *string
 	Encoding       *string
 	Verbose        *bool
+	Strategy       *string
 }
 
 func Conceal(args *ConcealArgs) error {
@@ -83,7 +85,13 @@ func Conceal(args *ConcealArgs) error {
 		return errors.New("image must have at least 2 pixels")
 	}
 
-	if totalBitsAvailable < totalBitsToBeWritten+numBitsToEncodeNumMessageBits {
+	// Capacity check depends on strategy
+	capacity := totalBitsAvailable
+	if *args.Strategy == "dct" {
+		// 1 bit per 8x8 block
+		capacity = (width / 8) * (height / 8)
+	}
+	if capacity < totalBitsToBeWritten {
 		return errors.New("image is not large enough to hide a message")
 	}
 
@@ -134,21 +142,65 @@ func Conceal(args *ConcealArgs) error {
 		log.Debug().Msg("Encoded the number of bits that will be written")
 	}
 
-	for _, encryptedByte := range messageBytes {
-		for i := 0; i < 8; i++ {
-			pixel := getPixel(outputImage, stepper.x, stepper.y)
-			channelValue := pixel[stepper.channel]
+	if *args.Strategy == "dct" {
+		// DCT Strategy: Embed in 8x8 blocks
+		// Skip the first block to protect metadata (header)
+		blockX := 1
+		blockY := 0
+		blocksW := width / 8
 
-			if bit := getBitUint8(encryptedByte, i); bit == 0 {
-				pixel[stepper.channel] = clearBitUint8(channelValue, stepper.bitIndexOffset)
-			} else {
-				pixel[stepper.channel] = setBitUint8(channelValue, stepper.bitIndexOffset)
+		for _, encryptedByte := range messageBytes {
+			for i := 0; i < 8; i++ {
+				if blockX >= blocksW {
+					blockX = 0
+					blockY++
+				}
+				if blockY*8+8 > height {
+					return errors.New("image too small for DCT message")
+				}
+
+				// Extract Blue channel 8x8 block
+				var block [8][8]float64
+				baseX, baseY := blockX*8, blockY*8
+				for bx := 0; bx < 8; bx++ {
+					for by := 0; by < 8; by++ {
+						pix := getPixel(outputImage, baseX+bx, baseY+by)
+						block[bx][by] = float64(pix[2]) // Blue channel
+					}
+				}
+
+				// DCT
+				dctBlock := dct2d(block)
+
+				// Embed bit in (4,4) coefficient
+				bit := getBitUint8(encryptedByte, i)
+				val := int(dctBlock[4][4])
+				if val%2 != 0 {
+					val -= 1 // Make even
+				}
+				if bit == 1 {
+					val += 1
+				}
+				dctBlock[4][4] = float64(val)
+
+				// IDCT
+				idctBlock := idct2d(dctBlock)
+
+				// Write back
+				for bx := 0; bx < 8; bx++ {
+					for by := 0; by < 8; by++ {
+						pix := getPixel(outputImage, baseX+bx, baseY+by)
+						pix[2] = uint8(math.Max(0, math.Min(255, idctBlock[bx][by])))
+					}
+				}
+				blockX++
 			}
-
-			if err := stepper.step(); err != nil {
-				return err
-			}
-
+		}
+	} else {
+		// LSB or LSB Matching
+		useMatching := *args.Strategy == "lsb-matching"
+		if err := concealBodyLSB(outputImage, stepper, messageBytes, useMatching); err != nil {
+			return err
 		}
 	}
 
@@ -164,6 +216,31 @@ func Conceal(args *ConcealArgs) error {
 
 	if *args.Verbose {
 		log.Info().Str("output", *args.Output).Msg("Encoded message into the image")
+	}
+
+	return nil
+}
+
+func concealBodyLSB(img *image.NRGBA, stepper *ImageStepper, message []byte, matching bool) error {
+	for _, b := range message {
+		for i := 0; i < 8; i++ {
+			pixel := getPixel(img, stepper.x, stepper.y)
+			channelValue := pixel[stepper.channel]
+			bit := getBitUint8(b, i)
+
+			if matching {
+				pixel[stepper.channel] = matchBitUint8(channelValue, stepper.bitIndexOffset, bit)
+			} else {
+				if bit == 0 {
+					pixel[stepper.channel] = clearBitUint8(channelValue, stepper.bitIndexOffset)
+				} else {
+					pixel[stepper.channel] = setBitUint8(channelValue, stepper.bitIndexOffset)
+				}
+			}
+			if err := stepper.step(); err != nil {
+				return err
+			}
+		}
 	}
 
 	return nil
@@ -255,28 +332,64 @@ func Reveal(args *RevealArgs) error {
 	numBitsRead := 0
 	byteIndex := 0
 
-	for i := 0; i < numMessageBits; i++ {
-		channels := colorToChannels(img.At(stepper.x, stepper.y))
-		channelValue := channels[stepper.channel]
+	if *args.Strategy == "dct" {
+		blockX := 1
+		blockY := 0
+		blocksW := width / 8
 
-		if getBitUint8(channelValue, stepper.bitIndexOffset) == 0 {
-			messageBytes[byteIndex] = clearBitUint8(messageBytes[byteIndex], numBitsRead)
-		} else {
-			messageBytes[byteIndex] = setBitUint8(messageBytes[byteIndex], numBitsRead)
+		for i := 0; i < numMessageBits; i++ {
+			if blockX >= blocksW {
+				blockX = 0
+				blockY++
+			}
+
+			// Extract Blue channel 8x8 block
+			var block [8][8]float64
+			baseX, baseY := blockX*8, blockY*8
+			for bx := 0; bx < 8; bx++ {
+				for by := 0; by < 8; by++ {
+					pix := getPixel(img.(*image.NRGBA), baseX+bx, baseY+by)
+					block[bx][by] = float64(pix[2])
+				}
+			}
+
+			// DCT
+			dctBlock := dct2d(block)
+			val := int(math.Round(dctBlock[4][4]))
+
+			if val%2 != 0 {
+				messageBytes[byteIndex] = setBitUint8(messageBytes[byteIndex], numBitsRead)
+			} else {
+				messageBytes[byteIndex] = clearBitUint8(messageBytes[byteIndex], numBitsRead)
+			}
+
+			if numBitsRead++; numBitsRead == 8 {
+				numBitsRead = 0
+				byteIndex++
+			}
+			blockX++
 		}
+	} else {
+		// LSB or LSB Matching (decoding is same for both)
+		for i := 0; i < numMessageBits; i++ {
+			channels := colorToChannels(img.At(stepper.x, stepper.y))
+			channelValue := channels[stepper.channel]
 
-		if numBitsRead++; numBitsRead == 8 {
-			numBitsRead = 0
-			byteIndex++
+			if getBitUint8(channelValue, stepper.bitIndexOffset) == 0 {
+				messageBytes[byteIndex] = clearBitUint8(messageBytes[byteIndex], numBitsRead)
+			} else {
+				messageBytes[byteIndex] = setBitUint8(messageBytes[byteIndex], numBitsRead)
+			}
+
+			if numBitsRead++; numBitsRead == 8 {
+				numBitsRead = 0
+				byteIndex++
+			}
+
+			if err := stepper.step(); err != nil {
+				return err
+			}
 		}
-
-		if err := stepper.step(); err != nil {
-			return err
-		}
-	}
-
-	if *args.Verbose && (*args.Passphrase != "" || *args.PrivateKeyPath != "") {
-		log.Debug().Msg("Decrypting message")
 	}
 
 	var message string

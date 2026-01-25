@@ -15,6 +15,7 @@ var (
 	cBits     int
 	cEncoding string
 	cChan     int
+	cStrategy string
 )
 
 var concealCmd = &cobra.Command{
@@ -41,6 +42,7 @@ var concealCmd = &cobra.Command{
 			Encoding:          &cEncoding,
 			NumChannels:       &cChan,
 			Verbose:           &verbose,
+			Strategy:          &cStrategy,
 		}
 
 		if err := stego.Conceal(cArgs); err != nil {
@@ -62,4 +64,5 @@ func init() {
 	concealCmd.Flags().IntVarP(&cBits, "num-bits", "n", 1, "Number of bits to use per channel value")
 	concealCmd.Flags().StringVarP(&cEncoding, "encoding", "e", "utf8", "Encoding to be used for the message")
 	concealCmd.Flags().IntVarP(&cChan, "channels", "c", 3, "Number of RGBA channels to use (1-4)")
+	concealCmd.Flags().StringVarP(&cStrategy, "strategy", "s", "dct", "Steganography strategy: lsb, lsb-matching, dct")
 }
