@@ -37,7 +37,6 @@ type RevealArgs struct {
 	Encoding       *string
 	Verbose        *bool
 	Strategy       *string
-	Output         *string
 }
 
 func Conceal(args *ConcealArgs) error {
@@ -47,8 +46,9 @@ func Conceal(args *ConcealArgs) error {
 		return err
 	}
 
-	if *args.Output == "" {
-		*args.Output = fmt.Sprintf("%s.out", *args.ImagePath)
+	output := *args.Output
+	if output == "" {
+		output = fmt.Sprintf("%s.out", *args.ImagePath)
 	}
 
 	width := img.Bounds().Max.X
@@ -83,14 +83,15 @@ func Conceal(args *ConcealArgs) error {
 	// DCT Strategy requires a Linear header to avoid collision with blocks.
 	// We force the stepper to be linear (seed 0) for the header writing phase.
 	stepperSeed := seed
+	numChannels := *args.NumChannels
+	numBitsPerChannel := *args.NumBitsPerChannel
+
 	if *args.Strategy == "dct" {
 		stepperSeed = 0
 		// Force header values to be consistent with DCT strategy
 		// DCT effectively uses 1 channel (Blue) and custom encoding.
-		// We set these to 1 to avoid misleading metadata in the header.
-		one := 1
-		args.NumChannels = &one
-		args.NumBitsPerChannel = &one
+		numChannels = 1
+		numBitsPerChannel = 1
 	}
 
 	if *args.PublicKeyPath != "" {
@@ -108,18 +109,16 @@ func Conceal(args *ConcealArgs) error {
 
 	totalBitsInImage := numBitsAvailable(width, height, 4, 8)
 	numBitsToEncodeNumMessageBits := int(math.Ceil(math.Log2(float64(totalBitsInImage))))
-	totalBitsToBeWritten := len(messageBytes) * 8
-	stepper := makeImageStepper(*args.NumBitsPerChannel, width, height, *args.NumChannels, totalBitsToBeWritten+numBitsToEncodeNumMessageBits, stepperSeed)
+	stepper := makeImageStepper(numBitsPerChannel, width, height, numChannels, stepperSeed)
 	outputImage := copyImage(img)
 	pixels := outputImage.Pix
 
-	totalBitsAvailable := numBitsAvailable(width, height, *args.NumChannels, *args.NumBitsPerChannel)
+	totalBitsAvailable := numBitsAvailable(width, height, numChannels, numBitsPerChannel)
 
 	if *args.Verbose {
 		log.Debug().Int("width", width).Int("height", height).Msg("Image dimensions")
 		log.Debug().Int("bits", totalBitsInImage).Msg("Total bits in image")
 		log.Debug().Int("available", totalBitsAvailable).Msg("Total bits available for use")
-		log.Debug().Int("required", totalBitsToBeWritten).Msg("Total bits to be written")
 	}
 
 	if width*height < 35 {
@@ -137,9 +136,10 @@ func Conceal(args *ConcealArgs) error {
 		capacity = (width / 8) * ((height / 8) - 1)
 	} else {
 		// Subtract reserved pixels (35 pixels * channels * bitsPerChannel)
-		capacity -= 35 * *args.NumChannels * *args.NumBitsPerChannel
+		capacity -= 35 * numChannels * numBitsPerChannel
 	}
 
+	totalBitsToBeWritten := len(messageBytes) * 8
 	required := totalBitsToBeWritten
 	if *args.Strategy != "dct" {
 		required += numBitsToEncodeNumMessageBits
@@ -149,7 +149,7 @@ func Conceal(args *ConcealArgs) error {
 	}
 
 	for i := 0; i < 4; i++ {
-		if getBit(*args.NumBitsPerChannel, i) == 0 {
+		if getBit(numBitsPerChannel, i) == 0 {
 			pixels[i] = clearBitUint8(pixels[i], 0)
 		} else {
 			pixels[i] = setBitUint8(pixels[i], 0)
@@ -163,7 +163,7 @@ func Conceal(args *ConcealArgs) error {
 	stepper.skipPixel()
 
 	for i := 4; i < 8; i++ {
-		if getBit(*args.NumChannels, i-4) == 0 {
+		if getBit(numChannels, i-4) == 0 {
 			pixels[i] = clearBitUint8(pixels[i], 0)
 		} else {
 			pixels[i] = setBitUint8(pixels[i], 0)
@@ -267,22 +267,21 @@ func Conceal(args *ConcealArgs) error {
 		}
 	}
 
-	file, err := os.Create(*args.Output)
+	file, err := os.Create(output)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
 
-	err = png.Encode(file, outputImage)
-	if err != nil {
+	if err := png.Encode(file, outputImage); err != nil {
 		return err
 	}
 
 	if *args.Verbose {
-		log.Info().Str("output", *args.Output).Msg("Encoded message into the image")
+		log.Info().Str("output", output).Msg("Encoded message into the image")
 	}
 
-	return nil
+	return file.Close()
 }
 
 func concealBodyLSB(img *image.NRGBA, stepper *ImageStepper, message []byte, matching bool, bar *progressbar.ProgressBar) error {
@@ -421,7 +420,7 @@ func Reveal(args *RevealArgs) ([]byte, error) {
 		stepperSeed = 0
 	}
 	// Initialize with total bits in image to ensure bounds check works while reading header
-	stepper := makeImageStepper(numBitsToUsePerChannel, width, height, numChannels, numBitsAvailable(width, height, 4, 8), stepperSeed)
+	stepper := makeImageStepper(numBitsToUsePerChannel, width, height, numChannels, stepperSeed)
 	stepper.skipPixel()
 	stepper.skipPixel()
 	stepper.skipPixel()
@@ -640,10 +639,10 @@ func addReedSolomon(data []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	// Prepend length (4 bytes) to handle padding later
-	length := uint32(len(data))
-	header := make([]byte, 4)
-	binary.BigEndian.PutUint32(header, length)
+	// Prepend length (8 bytes) to handle padding later
+	length := uint64(len(data))
+	header := make([]byte, 8)
+	binary.BigEndian.PutUint64(header, length)
 	payload := append(header, data...)
 
 	// Split into shards
@@ -691,13 +690,13 @@ func removeReedSolomon(data []byte) ([]byte, error) {
 	}
 
 	// Read original length
-	if len(joined) < 4 {
+	if len(joined) < 8 {
 		return nil, errors.New("recovered data too short")
 	}
-	length := binary.BigEndian.Uint32(joined[:4])
-	if uint32(len(joined)) < 4+length {
+	length := binary.BigEndian.Uint64(joined[:8])
+	if uint64(len(joined)) < 8+length {
 		return nil, errors.New("recovered data length mismatch")
 	}
 
-	return joined[4 : 4+length], nil
+	return joined[8 : 8+length], nil
 }

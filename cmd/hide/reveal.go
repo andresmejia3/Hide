@@ -33,7 +33,6 @@ var revealCmd = &cobra.Command{
 			Encoding:       &rEncoding,
 			Verbose:        &verbose,
 			Strategy:       &rStrategy,
-			Output:         &rOut,
 		}
 
 		revealedBytes, err := stego.Reveal(rArgs)

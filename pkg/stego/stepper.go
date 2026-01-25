@@ -77,12 +77,11 @@ type ImageStepper struct {
 	width                  int
 	height                 int
 	channelSize            int
-	totalBitsToBeWritten   int
 
 	iterator pixelIterator
 }
 
-func makeImageStepper(numBitsToUsePerChannel int, width int, height int, channelSize int, totalBitsToBeWritten int, seed int64) *ImageStepper {
+func makeImageStepper(numBitsToUsePerChannel int, width int, height int, channelSize int, seed int64) *ImageStepper {
 	var it pixelIterator
 	if seed != 0 {
 		it = newRandomIterator(width, height, seed)
@@ -100,7 +99,6 @@ func makeImageStepper(numBitsToUsePerChannel int, width int, height int, channel
 		width:                  width,
 		height:                 height,
 		channelSize:            channelSize,
-		totalBitsToBeWritten:   totalBitsToBeWritten,
 		iterator:               it,
 	}
 

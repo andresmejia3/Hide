@@ -82,7 +82,8 @@ func GenerateRSAKeys(bits int, outDir string) error {
 	}
 
 	// Save Private Key
-	privFile, err := os.Create(filepath.Join(outDir, "private.pem"))
+	// Use 0600 permissions to ensure only the owner can read the private key.
+	privFile, err := os.OpenFile(filepath.Join(outDir, "private.pem"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
 	}

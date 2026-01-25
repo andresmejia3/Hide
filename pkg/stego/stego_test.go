@@ -68,7 +68,6 @@ func TestEndToEndSteganography(t *testing.T) {
 		Encoding:       &encoding,
 		PrivateKeyPath: new(string), // Empty string
 		Strategy:       &strategy,
-		Output:         new(string), // Not used in test, but required by struct
 	}
 
 	revealedBytes, err := Reveal(rArgs)
@@ -143,7 +142,6 @@ func TestEndToEndSteganographyRSA(t *testing.T) {
 		Encoding:       &encoding,
 		PrivateKeyPath: &privKeyPath,
 		Strategy:       &strategy,
-		Output:         new(string),
 	}
 
 	revealedBytes, err := Reveal(rArgs)
