@@ -1,15 +1,18 @@
 package stego
 
 import (
+	"bufio"
 	"crypto/rand"
 	"errors"
 	"fmt"
 	"image"
 	"image/png"
+	"io"
 	"math"
 	"os"
 
 	"github.com/rs/zerolog/log"
+	"github.com/schollz/progressbar/v3"
 )
 
 type ConcealArgs struct {
@@ -97,12 +100,12 @@ func Conceal(args *ConcealArgs) error {
 	}
 
 	totalBitsToBeWritten := len(messageBytes) * 8
-	stepper := makeImageStepper(*args.NumBitsPerChannel, width, height, *args.NumChannels, totalBitsToBeWritten, stepperSeed)
+	stepper := makeImageStepper(*args.NumBitsPerChannel, width, height, *args.NumChannels, totalBitsToBeWritten+numBitsToEncodeNumMessageBits, stepperSeed)
 	outputImage := copyImage(img)
 	totalBitsInImage := numBitsAvailable(width, height, 4, 8)
 	pixels := outputImage.Pix
 
-	numBitsToEncodeNumMessageBits := int(math.Floor(math.Log2(float64(totalBitsInImage))))
+	numBitsToEncodeNumMessageBits := int(math.Ceil(math.Log2(float64(totalBitsInImage))))
 	totalBitsAvailable := numBitsAvailable(width, height, *args.NumChannels, *args.NumBitsPerChannel)
 
 	if *args.Verbose {
@@ -120,8 +123,8 @@ func Conceal(args *ConcealArgs) error {
 	capacity := totalBitsAvailable
 	if *args.Strategy == "dct" {
 		// 1 bit per 8x8 block
-		if width < 8 {
-			return errors.New("image width must be at least 8 pixels for DCT strategy")
+		if width < 9 {
+			return errors.New("image width must be at least 9 pixels for DCT strategy to fit header")
 		}
 		// We skip the first row of blocks (blockY=0) to reserve space for the header
 		capacity = (width / 8) * ((height / 8) - 1)
@@ -129,7 +132,12 @@ func Conceal(args *ConcealArgs) error {
 		// Subtract reserved pixels (35 pixels * channels * bitsPerChannel)
 		capacity -= 35 * *args.NumChannels * *args.NumBitsPerChannel
 	}
-	if capacity < totalBitsToBeWritten {
+
+	required := totalBitsToBeWritten
+	if *args.Strategy != "dct" {
+		required += numBitsToEncodeNumMessageBits
+	}
+	if capacity < required {
 		return errors.New("image is not large enough to hide a message")
 	}
 
@@ -215,6 +223,12 @@ func Conceal(args *ConcealArgs) error {
 		log.Debug().Msg("Encoded the number of bits that will be written")
 	}
 
+	bar := progressbar.NewOptions64(
+		int64(len(messageBytes)),
+		progressbar.OptionSetDescription("encoding"),
+		progressbar.OptionSetWriter(os.Stderr),
+	)
+
 	if *args.Strategy == "dct" {
 		// DCT Strategy: Embed in 8x8 blocks
 		// Skip the first row of blocks to protect metadata (header) completely
@@ -223,6 +237,7 @@ func Conceal(args *ConcealArgs) error {
 		blocksW := width / 8
 
 		for _, encryptedByte := range messageBytes {
+			bar.Add(1)
 			for i := 0; i < 8; i++ {
 				if blockX >= blocksW {
 					blockX = 0
@@ -278,7 +293,7 @@ func Conceal(args *ConcealArgs) error {
 	} else {
 		// LSB or LSB Matching
 		useMatching := *args.Strategy == "lsb-matching"
-		if err := concealBodyLSB(outputImage, stepper, messageBytes, useMatching); err != nil {
+		if err := concealBodyLSB(outputImage, stepper, messageBytes, useMatching, bar); err != nil {
 			return err
 		}
 	}
@@ -301,15 +316,25 @@ func Conceal(args *ConcealArgs) error {
 	return nil
 }
 
-func concealBodyLSB(img *image.NRGBA, stepper *ImageStepper, message []byte, matching bool) error {
+func concealBodyLSB(img *image.NRGBA, stepper *ImageStepper, message []byte, matching bool, bar *progressbar.ProgressBar) error {
+	var rng io.ByteReader
+	if matching {
+		rng = bufio.NewReader(rand.Reader)
+	}
+
 	for _, b := range message {
+		bar.Add(1)
 		for i := 0; i < 8; i++ {
 			pixel := getPixel(img, stepper.x, stepper.y)
 			channelValue := pixel[stepper.channel]
 			bit := getBitUint8(b, i)
 
 			if matching {
-				pixel[stepper.channel] = matchBitUint8(channelValue, stepper.bitIndexOffset, bit)
+				val, err := matchBitUint8(channelValue, stepper.bitIndexOffset, bit, rng)
+				if err != nil {
+					return err
+				}
+				pixel[stepper.channel] = val
 			} else {
 				if bit == 0 {
 					pixel[stepper.channel] = clearBitUint8(channelValue, stepper.bitIndexOffset)
@@ -426,7 +451,8 @@ func Reveal(args *RevealArgs) error {
 	if *args.Strategy == "dct" {
 		stepperSeed = 0
 	}
-	stepper := makeImageStepper(numBitsToUsePerChannel, width, height, numChannels, numMessageBits, stepperSeed)
+	// Initialize with total bits in image to ensure bounds check works while reading header
+	stepper := makeImageStepper(numBitsToUsePerChannel, width, height, numChannels, numBitsAvailable(width, height, 4, 8), stepperSeed)
 	stepper.skipPixel()
 	stepper.skipPixel()
 	stepper.skipPixel()
@@ -436,7 +462,7 @@ func Reveal(args *RevealArgs) error {
 	}
 
 	totalBitsInImage := numBitsAvailable(width, height, 4, 8)
-	numBitsToEncodeNumMessageBits := int(math.Floor(math.Log2(float64(totalBitsInImage))))
+	numBitsToEncodeNumMessageBits := int(math.Ceil(math.Log2(float64(totalBitsInImage))))
 
 	for i := 0; i < numBitsToEncodeNumMessageBits; i++ {
 		channels := colorToChannels(img.At(stepper.x, stepper.y))
@@ -456,17 +482,23 @@ func Reveal(args *RevealArgs) error {
 	// Validate message length against capacity
 	var capacity int
 	if *args.Strategy == "dct" {
-		if width < 8 {
-			return errors.New("image width must be at least 8 pixels for DCT strategy")
+		if width < 9 {
+			return errors.New("image width must be at least 9 pixels for DCT strategy to fit header")
 		}
 		capacity = (width / 8) * ((height / 8) - 1)
 	} else {
 		// LSB capacity (approximate check, stepper handles exact bounds)
 		capacity = numBitsAvailable(width, height, numChannels, numBitsToUsePerChannel)
 		capacity -= 35 * numChannels * numBitsToUsePerChannel
+		// Account for the bits used to store the message length
+		capacity -= int(math.Ceil(math.Log2(float64(numBitsAvailable(width, height, 4, 8)))))
 	}
+
 	if numMessageBits < 0 || numMessageBits > capacity {
 		return fmt.Errorf("invalid header: message length %d exceeds capacity %d", numMessageBits, capacity)
+	}
+	if numMessageBits%8 != 0 {
+		return fmt.Errorf("invalid header: message length %d is not a multiple of 8", numMessageBits)
 	}
 
 	if *args.Verbose {
@@ -477,12 +509,19 @@ func Reveal(args *RevealArgs) error {
 	numBitsRead := 0
 	byteIndex := 0
 
+	bar := progressbar.NewOptions64(
+		int64(numMessageBits),
+		progressbar.OptionSetDescription("decoding"),
+		progressbar.OptionSetWriter(os.Stderr),
+	)
+
 	if *args.Strategy == "dct" {
 		blockX := 0
 		blockY := 1
 		blocksW := width / 8
 
 		for i := 0; i < numMessageBits; i++ {
+			bar.Add(1)
 			if blockX >= blocksW {
 				blockX = 0
 				blockY++
@@ -521,6 +560,7 @@ func Reveal(args *RevealArgs) error {
 	} else {
 		// LSB or LSB Matching (decoding is same for both)
 		for i := 0; i < numMessageBits; i++ {
+			bar.Add(1)
 			channels := colorToChannels(img.At(stepper.x, stepper.y))
 			channelValue := channels[stepper.channel]
 

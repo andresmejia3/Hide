@@ -1,11 +1,11 @@
 package stego
 
 import (
-	"crypto/rand"
 	"image"
 	"image/color"
 	_ "image/gif"
 	_ "image/jpeg"
+	"io"
 	"math"
 	"os"
 )
@@ -92,28 +92,28 @@ func clearBitUint8(num uint8, index int) uint8 {
 	return num & mask
 }
 
-func matchBitUint8(num uint8, index int, bit int) uint8 {
+func matchBitUint8(num uint8, index int, bit int, rng io.ByteReader) (uint8, error) {
 	// LSB Matching only applies to the least significant bit (index 0).
 	// For other bits, we fall back to standard replacement.
 	if index != 0 {
 		if bit == 0 {
-			return clearBitUint8(num, index)
+			return clearBitUint8(num, index), nil
 		}
-		return setBitUint8(num, index)
+		return setBitUint8(num, index), nil
 	}
 
 	val := int(num)
 	currentBit := val & 1
 	if currentBit == bit {
-		return num
+		return num, nil
 	}
 
 	// Randomly add or subtract 1 to flip the LSB
-	b := make([]byte, 1)
-	if _, err := rand.Read(b); err != nil {
-		panic(err)
+	b, err := rng.ReadByte()
+	if err != nil {
+		return 0, err
 	}
-	if b[0]%2 == 0 {
+	if b%2 == 0 {
 		val++
 	} else {
 		val--
@@ -126,19 +126,29 @@ func matchBitUint8(num uint8, index int, bit int) uint8 {
 		val = 1 // 0 -> 1 flips LSB (0 -> 1)
 	}
 
-	return uint8(val)
+	return uint8(val), nil
 }
 
 // DCT Helpers
 const blockSize = 8
 
+var dctCosTable [blockSize][blockSize]float64
+
+func init() {
+	c1 := math.Pi / (2.0 * blockSize)
+	for u := 0; u < blockSize; u++ {
+		for x := 0; x < blockSize; x++ {
+			dctCosTable[u][x] = math.Cos(float64(2*x+1) * float64(u) * c1)
+		}
+	}
+}
+
 func dct1d(in [blockSize]float64) [blockSize]float64 {
 	var out [blockSize]float64
-	c1 := math.Pi / (2.0 * blockSize)
 	for u := 0; u < blockSize; u++ {
 		sum := 0.0
 		for x := 0; x < blockSize; x++ {
-			sum += in[x] * math.Cos(float64(2*x+1)*float64(u)*c1)
+			sum += in[x] * dctCosTable[u][x]
 		}
 		alpha := 1.0
 		if u == 0 {
@@ -151,7 +161,6 @@ func dct1d(in [blockSize]float64) [blockSize]float64 {
 
 func idct1d(in [blockSize]float64) [blockSize]float64 {
 	var out [blockSize]float64
-	c1 := math.Pi / (2.0 * blockSize)
 	for x := 0; x < blockSize; x++ {
 		sum := 0.0
 		for u := 0; u < blockSize; u++ {
@@ -159,7 +168,7 @@ func idct1d(in [blockSize]float64) [blockSize]float64 {
 			if u == 0 {
 				alpha = 1.0 / math.Sqrt(2)
 			}
-			sum += alpha * in[u] * math.Cos(float64(2*x+1)*float64(u)*c1)
+			sum += alpha * in[u] * dctCosTable[u][x]
 		}
 		out[x] = 0.5 * sum
 	}
