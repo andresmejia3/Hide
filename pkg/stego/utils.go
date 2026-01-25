@@ -25,13 +25,10 @@ func loadImage(path string) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer file.Close()
 
 	img, _, err := image.Decode(file)
 	if err != nil {
-		return nil, err
-	}
-
-	if err := file.Close(); err != nil {
 		return nil, err
 	}
 
@@ -131,54 +128,74 @@ func matchBitUint8(num uint8, index int, bit int) uint8 {
 // DCT Helpers
 const blockSize = 8
 
-func dct2d(block [blockSize][blockSize]float64) [blockSize][blockSize]float64 {
-	var dct [blockSize][blockSize]float64
+func dct1d(in [blockSize]float64) [blockSize]float64 {
+	var out [blockSize]float64
 	c1 := math.Pi / (2.0 * blockSize)
-
 	for u := 0; u < blockSize; u++ {
-		for v := 0; v < blockSize; v++ {
-			sum := 0.0
-			for x := 0; x < blockSize; x++ {
-				for y := 0; y < blockSize; y++ {
-					sum += block[x][y] * math.Cos(float64(2*x+1)*float64(u)*c1) * math.Cos(float64(2*y+1)*float64(v)*c1)
-				}
-			}
-			alphaU := 1.0
+		sum := 0.0
+		for x := 0; x < blockSize; x++ {
+			sum += in[x] * math.Cos(float64(2*x+1)*float64(u)*c1)
+		}
+		alpha := 1.0
+		if u == 0 {
+			alpha = 1.0 / math.Sqrt(2)
+		}
+		out[u] = 0.5 * alpha * sum
+	}
+	return out
+}
+
+func idct1d(in [blockSize]float64) [blockSize]float64 {
+	var out [blockSize]float64
+	c1 := math.Pi / (2.0 * blockSize)
+	for x := 0; x < blockSize; x++ {
+		sum := 0.0
+		for u := 0; u < blockSize; u++ {
+			alpha := 1.0
 			if u == 0 {
-				alphaU = 1.0 / math.Sqrt(2)
+				alpha = 1.0 / math.Sqrt(2)
 			}
-			alphaV := 1.0
-			if v == 0 {
-				alphaV = 1.0 / math.Sqrt(2)
-			}
-			dct[u][v] = 0.25 * alphaU * alphaV * sum
+			sum += alpha * in[u] * math.Cos(float64(2*x+1)*float64(u)*c1)
+		}
+		out[x] = 0.5 * sum
+	}
+	return out
+}
+
+func dct2d(block [blockSize][blockSize]float64) [blockSize][blockSize]float64 {
+	var temp [blockSize][blockSize]float64
+	for i := 0; i < blockSize; i++ {
+		temp[i] = dct1d(block[i])
+	}
+	var out [blockSize][blockSize]float64
+	for j := 0; j < blockSize; j++ {
+		var col [blockSize]float64
+		for i := 0; i < blockSize; i++ {
+			col[i] = temp[i][j]
+		}
+		res := dct1d(col)
+		for i := 0; i < blockSize; i++ {
+			out[i][j] = res[i]
 		}
 	}
-	return dct
+	return out
 }
 
 func idct2d(dct [blockSize][blockSize]float64) [blockSize][blockSize]float64 {
-	var block [blockSize][blockSize]float64
-	c1 := math.Pi / (2.0 * blockSize)
-
-	for x := 0; x < blockSize; x++ {
-		for y := 0; y < blockSize; y++ {
-			sum := 0.0
-			for u := 0; u < blockSize; u++ {
-				for v := 0; v < blockSize; v++ {
-					alphaU := 1.0
-					if u == 0 {
-						alphaU = 1.0 / math.Sqrt(2)
-					}
-					alphaV := 1.0
-					if v == 0 {
-						alphaV = 1.0 / math.Sqrt(2)
-					}
-					sum += alphaU * alphaV * dct[u][v] * math.Cos(float64(2*x+1)*float64(u)*c1) * math.Cos(float64(2*y+1)*float64(v)*c1)
-				}
-			}
-			block[x][y] = 0.25 * sum
+	var temp [blockSize][blockSize]float64
+	for i := 0; i < blockSize; i++ {
+		temp[i] = idct1d(dct[i])
+	}
+	var out [blockSize][blockSize]float64
+	for j := 0; j < blockSize; j++ {
+		var col [blockSize]float64
+		for i := 0; i < blockSize; i++ {
+			col[i] = temp[i][j]
+		}
+		res := idct1d(col)
+		for i := 0; i < blockSize; i++ {
+			out[i][j] = res[i]
 		}
 	}
-	return block
+	return out
 }

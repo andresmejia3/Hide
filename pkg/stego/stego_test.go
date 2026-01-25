@@ -244,8 +244,8 @@ func TestEndToEndSteganographyDCT(t *testing.T) {
 	outputPath := filepath.Join(tmpDir, "output_dct.png")
 
 	// Create dummy image (needs to be large enough for 8x8 blocks)
-	// 100x100 = ~144 blocks.
-	img := image.NewNRGBA(image.Rect(0, 0, 100, 100))
+	// 200x200 = 625 blocks.
+	img := image.NewNRGBA(image.Rect(0, 0, 200, 200))
 	for i := 0; i < len(img.Pix); i++ {
 		img.Pix[i] = uint8(i % 255)
 	}

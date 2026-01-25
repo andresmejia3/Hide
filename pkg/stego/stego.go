@@ -58,6 +58,19 @@ func Conceal(args *ConcealArgs) error {
 		seed = getSeed(*args.Passphrase)
 	}
 
+	// DCT Strategy requires a Linear header to avoid collision with blocks.
+	// We force the stepper to be linear (seed 0) for the header writing phase.
+	stepperSeed := seed
+	if *args.Strategy == "dct" {
+		stepperSeed = 0
+		// Force header values to be consistent with DCT strategy
+		// DCT effectively uses 1 channel (Blue) and custom encoding.
+		// We set these to 1 to avoid misleading metadata in the header.
+		one := 1
+		args.NumChannels = &one
+		args.NumBitsPerChannel = &one
+	}
+
 	if *args.PublicKeyPath != "" {
 		messageBytes, err = encryptRSA(messageBytes, *args.PublicKeyPath)
 		if err != nil {
@@ -66,7 +79,7 @@ func Conceal(args *ConcealArgs) error {
 	}
 
 	totalBitsToBeWritten := len(messageBytes) * 8
-	stepper := makeImageStepper(*args.NumBitsPerChannel, width, height, *args.NumChannels, totalBitsToBeWritten, seed)
+	stepper := makeImageStepper(*args.NumBitsPerChannel, width, height, *args.NumChannels, totalBitsToBeWritten, stepperSeed)
 	outputImage := copyImage(img)
 	totalBitsInImage := numBitsAvailable(width, height, 4, 8)
 	pixels := outputImage.Pix
@@ -81,15 +94,16 @@ func Conceal(args *ConcealArgs) error {
 		log.Debug().Int("required", totalBitsToBeWritten).Msg("Total bits to be written")
 	}
 
-	if width+height < 2 {
-		return errors.New("image must have at least 2 pixels")
+	if width*height < 3 {
+		return errors.New("image must have at least 3 pixels")
 	}
 
 	// Capacity check depends on strategy
 	capacity := totalBitsAvailable
 	if *args.Strategy == "dct" {
 		// 1 bit per 8x8 block
-		capacity = (width / 8) * (height / 8)
+		// We skip the first row of blocks (blockY=0) to reserve space for the header
+		capacity = (width / 8) * ((height / 8) - 1)
 	}
 	if capacity < totalBitsToBeWritten {
 		return errors.New("image is not large enough to hide a message")
@@ -123,6 +137,25 @@ func Conceal(args *ConcealArgs) error {
 
 	stepper.skipPixel()
 
+	// Encode Strategy ID into the third pixel
+	// 0: lsb, 1: lsb-matching, 2: dct
+	strategyID := 0
+	switch *args.Strategy {
+	case "lsb-matching":
+		strategyID = 1
+	case "dct":
+		strategyID = 2
+	}
+
+	for i := 8; i < 12; i++ {
+		if getBit(strategyID, i-8) == 0 {
+			pixels[i] = clearBitUint8(pixels[i], 0)
+		} else {
+			pixels[i] = setBitUint8(pixels[i], 0)
+		}
+	}
+	stepper.skipPixel()
+
 	for i := 0; i < numBitsToEncodeNumMessageBits; i++ {
 		pixel := getPixel(outputImage, stepper.x, stepper.y)
 		channelValue := pixel[stepper.channel]
@@ -144,9 +177,9 @@ func Conceal(args *ConcealArgs) error {
 
 	if *args.Strategy == "dct" {
 		// DCT Strategy: Embed in 8x8 blocks
-		// Skip the first block to protect metadata (header)
-		blockX := 1
-		blockY := 0
+		// Skip the first row of blocks to protect metadata (header) completely
+		blockX := 0
+		blockY := 1
 		blocksW := width / 8
 
 		for _, encryptedByte := range messageBytes {
@@ -300,6 +333,42 @@ func Reveal(args *RevealArgs) error {
 		}
 	}
 
+	// Decode Strategy ID from the third pixel
+	var p2x, p2y int
+	if width >= 3 {
+		p2x, p2y = 2, 0
+	} else if width == 2 {
+		p2x, p2y = 0, 1
+	} else {
+		p2x, p2y = 0, 2
+	}
+	channels = colorToChannels(img.At(p2x, p2y))
+	strategyID := 0
+	for i := 0; i < 4; i++ {
+		if getBitUint8(channels[i], 0) != 0 {
+			strategyID = setBit(strategyID, i)
+		}
+	}
+
+	// Auto-detect strategy
+	switch strategyID {
+	case 0:
+		*args.Strategy = "lsb"
+	case 1:
+		*args.Strategy = "lsb-matching"
+	case 2:
+		*args.Strategy = "dct"
+	}
+	// If strategyID is unknown, we default to whatever was passed in args or standard lsb, but here we trust the file.
+
+	// Validate header data to prevent panics on non-stego images
+	if numChannels < 1 || numChannels > 4 {
+		return fmt.Errorf("invalid header: detected %d channels (must be 1-4)", numChannels)
+	}
+	if numBitsToUsePerChannel < 1 || numBitsToUsePerChannel > 8 {
+		return fmt.Errorf("invalid header: detected %d bits per channel (must be 1-8)", numBitsToUsePerChannel)
+	}
+
 	if *args.Verbose {
 		log.Debug().Int("channels", numChannels).Msg("Decoded number of channels")
 	}
@@ -309,7 +378,12 @@ func Reveal(args *RevealArgs) error {
 		seed = getSeed(*args.Passphrase)
 	}
 
-	stepper := makeImageStepper(numBitsToUsePerChannel, width, height, numChannels, 0, seed)
+	stepperSeed := seed
+	if *args.Strategy == "dct" {
+		stepperSeed = 0
+	}
+	stepper := makeImageStepper(numBitsToUsePerChannel, width, height, numChannels, numMessageBits, stepperSeed)
+	stepper.skipPixel()
 	stepper.skipPixel()
 	stepper.skipPixel()
 
@@ -331,6 +405,18 @@ func Reveal(args *RevealArgs) error {
 		}
 	}
 
+	// Validate message length against capacity
+	var capacity int
+	if *args.Strategy == "dct" {
+		capacity = (width / 8) * ((height / 8) - 1)
+	} else {
+		// LSB capacity (approximate check, stepper handles exact bounds)
+		capacity = numBitsAvailable(width, height, numChannels, numBitsToUsePerChannel)
+	}
+	if numMessageBits < 0 || numMessageBits > capacity {
+		return fmt.Errorf("invalid header: message length %d exceeds capacity %d", numMessageBits, capacity)
+	}
+
 	if *args.Verbose {
 		log.Debug().Int("messageBits", numMessageBits).Msg("Decoded number of bits used to encode the message")
 	}
@@ -340,14 +426,17 @@ func Reveal(args *RevealArgs) error {
 	byteIndex := 0
 
 	if *args.Strategy == "dct" {
-		blockX := 1
-		blockY := 0
+		blockX := 0
+		blockY := 1
 		blocksW := width / 8
 
 		for i := 0; i < numMessageBits; i++ {
 			if blockX >= blocksW {
 				blockX = 0
 				blockY++
+			}
+			if blockY*8+8 > height {
+				return errors.New("image too small for DCT message")
 			}
 
 			// Extract Blue channel 8x8 block

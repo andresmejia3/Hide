@@ -34,7 +34,7 @@ func (it *linearIterator) next() (int, int, bool) {
 }
 
 // randomIterator traverses pixels in a pseudo-random order determined by a seed.
-// It skips the first two pixels (0,0 and 0,1 or 1,0) which are reserved for metadata.
+// It skips the first three pixels which are reserved for metadata.
 type randomIterator struct {
 	indices []int
 	current int
@@ -48,11 +48,11 @@ func newRandomIterator(width, height int, seed int64) *randomIterator {
 		indices[i] = i
 	}
 
-	// Shuffle indices starting from 2 to preserve metadata pixels
-	if count > 2 {
+	// Shuffle indices starting from 3 to preserve metadata pixels
+	if count > 3 {
 		r := rand.New(rand.NewSource(seed))
-		r.Shuffle(count-2, func(i, j int) {
-			indices[i+2], indices[j+2] = indices[j+2], indices[i+2]
+		r.Shuffle(count-3, func(i, j int) {
+			indices[i+3], indices[j+3] = indices[j+3], indices[i+3]
 		})
 	}
 	return &randomIterator{indices: indices, width: width}
