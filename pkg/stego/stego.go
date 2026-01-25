@@ -1,6 +1,7 @@
 package stego
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"image"
@@ -32,6 +33,7 @@ type RevealArgs struct {
 	Encoding       *string
 	Verbose        *bool
 	Strategy       *string
+	Output         *string
 }
 
 func Conceal(args *ConcealArgs) error {
@@ -60,8 +62,14 @@ func Conceal(args *ConcealArgs) error {
 	}
 
 	var seed int64
+	// Generate random salt (16 bytes)
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		return err
+	}
+
 	if *args.Passphrase != "" {
-		messageBytes, err = encrypt(messageBytes, *args.Passphrase)
+		messageBytes, err = encrypt(messageBytes, *args.Passphrase, salt)
 		if err != nil {
 			return err
 		}
@@ -104,8 +112,8 @@ func Conceal(args *ConcealArgs) error {
 		log.Debug().Int("required", totalBitsToBeWritten).Msg("Total bits to be written")
 	}
 
-	if width*height < 3 {
-		return errors.New("image must have at least 3 pixels")
+	if width*height < 35 {
+		return errors.New("image must have at least 35 pixels (header+salt)")
 	}
 
 	// Capacity check depends on strategy
@@ -165,6 +173,22 @@ func Conceal(args *ConcealArgs) error {
 		}
 	}
 	stepper.skipPixel()
+
+	// Encode Salt into pixels 3..34 (32 pixels * 4 channels * 1 bit = 128 bits = 16 bytes)
+	// We use 1 bit per channel regardless of args to ensure robustness of salt
+	saltBitIndex := 0
+	for i := 12; i < 12+(32*4); i++ {
+		bit := getBitUint8(salt[saltBitIndex/8], saltBitIndex%8)
+		if bit == 0 {
+			pixels[i] = clearBitUint8(pixels[i], 0)
+		} else {
+			pixels[i] = setBitUint8(pixels[i], 0)
+		}
+		saltBitIndex++
+		if i%4 == 3 {
+			stepper.skipPixel()
+		} // Advance stepper every 4 channels (1 pixel)
+	}
 
 	for i := 0; i < numBitsToEncodeNumMessageBits; i++ {
 		pixel := getPixel(outputImage, stepper.x, stepper.y)
@@ -302,6 +326,7 @@ func Reveal(args *RevealArgs) error {
 	}
 	// Convert to NRGBA to ensure consistent pixel access and avoid type assertion panics
 	img := copyImage(imgRaw)
+	pixels := img.Pix
 
 	var channels []uint8
 	width := img.Bounds().Max.X
@@ -310,7 +335,7 @@ func Reveal(args *RevealArgs) error {
 	numChannels := 0
 	numMessageBits := 0
 
-	channels = colorToChannels(img.At(0, 0))
+	channels = pixels[0:4]
 
 	for i := 0; i < 4; i++ {
 		channelValue := channels[i]
@@ -327,11 +352,7 @@ func Reveal(args *RevealArgs) error {
 		log.Debug().Int("bitsPerChannel", numBitsToUsePerChannel).Msg("Decoded number of bits to use per channel")
 	}
 
-	if (image.Point{X: 1, Y: 0}.In(img.Bounds())) {
-		channels = colorToChannels(img.At(1, 0))
-	} else {
-		channels = colorToChannels(img.At(0, 1))
-	}
+	channels = pixels[4:8]
 
 	for i := 0; i < 4; i++ {
 		channelValue := channels[i]
@@ -344,15 +365,7 @@ func Reveal(args *RevealArgs) error {
 	}
 
 	// Decode Strategy ID from the third pixel
-	var p2x, p2y int
-	if width >= 3 {
-		p2x, p2y = 2, 0
-	} else if width == 2 {
-		p2x, p2y = 0, 1
-	} else {
-		p2x, p2y = 0, 2
-	}
-	channels = colorToChannels(img.At(p2x, p2y))
+	channels = pixels[8:12]
 	strategyID := 0
 	for i := 0; i < 4; i++ {
 		if getBitUint8(channels[i], 0) != 0 {
@@ -383,6 +396,16 @@ func Reveal(args *RevealArgs) error {
 		log.Debug().Int("channels", numChannels).Msg("Decoded number of channels")
 	}
 
+	// Decode Salt from pixels 3..34
+	salt := make([]byte, 16)
+	saltBitIndex := 0
+	for i := 12; i < 12+(32*4); i++ {
+		if getBitUint8(pixels[i], 0) != 0 {
+			salt[saltBitIndex/8] = setBitUint8(salt[saltBitIndex/8], saltBitIndex%8)
+		}
+		saltBitIndex++
+	}
+
 	var seed int64
 	if *args.Passphrase != "" {
 		seed = getSeed(*args.Passphrase)
@@ -396,6 +419,10 @@ func Reveal(args *RevealArgs) error {
 	stepper.skipPixel()
 	stepper.skipPixel()
 	stepper.skipPixel()
+	// Skip salt pixels
+	for i := 0; i < 32; i++ {
+		stepper.skipPixel()
+	}
 
 	totalBitsInImage := numBitsAvailable(width, height, 4, 8)
 	numBitsToEncodeNumMessageBits := int(math.Floor(math.Log2(float64(totalBitsInImage))))
@@ -502,7 +529,7 @@ func Reveal(args *RevealArgs) error {
 	var message string
 
 	if *args.Passphrase != "" {
-		decrypted, err := decrypt(messageBytes, *args.Passphrase)
+		decrypted, err := decrypt(messageBytes, *args.Passphrase, salt)
 		if err != nil {
 			return fmt.Errorf("failed to decrypt message: %v", err)
 		}
@@ -519,6 +546,10 @@ func Reveal(args *RevealArgs) error {
 		message = string(messageBytes)
 	}
 
-	fmt.Println(message)
+	if args.Output != nil && *args.Output != "" {
+		return os.WriteFile(*args.Output, []byte(message), 0644)
+	} else {
+		fmt.Println(message)
+	}
 	return nil
 }

@@ -5,11 +5,11 @@ import "testing"
 func TestImageStepper(t *testing.T) {
 	// Setup a stepper for a 2x2 image, 3 channels (RGB), 1 bit per channel
 	// Total capacity: 2 * 2 * 3 * 1 = 12 bits
-	width := 2
-	height := 2
+	width := 10
+	height := 10
 	channels := 3
 	bitsPerChannel := 1
-	totalBits := 12
+	totalBits := 100
 
 	stepper := makeImageStepper(bitsPerChannel, width, height, channels, totalBits, 0)
 

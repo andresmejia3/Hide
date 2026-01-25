@@ -184,7 +184,7 @@ func TestWrongPassword(t *testing.T) {
 	outputPath := filepath.Join(tmpDir, "output_wrongpass.png")
 
 	// Create dummy image
-	img := image.NewNRGBA(image.Rect(0, 0, 50, 50))
+	img := image.NewNRGBA(image.Rect(0, 0, 100, 100))
 	f, _ := os.Create(inputPath)
 	png.Encode(f, img)
 	f.Close()

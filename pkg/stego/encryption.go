@@ -15,10 +15,8 @@ import (
 	"path/filepath"
 )
 
-func createHash(key string) []byte {
-	// Use a simple PBKDF2-like approach with a static salt and high iteration count.
-	// In a production system, we would store a random salt in the image header.
-	salt := []byte("HideProjectStaticSalt")
+func createHash(key string, salt []byte) []byte {
+	// Use a simple PBKDF2-like approach with the provided salt
 	iterations := 100000
 	hasher := sha256.New()
 	result := []byte(key)
@@ -30,8 +28,8 @@ func createHash(key string) []byte {
 	return result
 }
 
-func encrypt(data []byte, passphrase string) ([]byte, error) {
-	return encryptWithKey(data, createHash(passphrase))
+func encrypt(data []byte, passphrase string, salt []byte) ([]byte, error) {
+	return encryptWithKey(data, createHash(passphrase, salt))
 }
 
 func encryptWithKey(data []byte, key []byte) ([]byte, error) {
@@ -51,8 +49,8 @@ func encryptWithKey(data []byte, key []byte) ([]byte, error) {
 	return ciphertext, nil
 }
 
-func decrypt(data []byte, passphrase string) ([]byte, error) {
-	return decryptWithKey(data, createHash(passphrase))
+func decrypt(data []byte, passphrase string, salt []byte) ([]byte, error) {
+	return decryptWithKey(data, createHash(passphrase, salt))
 }
 
 func decryptWithKey(data []byte, key []byte) ([]byte, error) {
