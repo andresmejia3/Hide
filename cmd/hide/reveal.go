@@ -1,0 +1,46 @@
+package main
+
+import (
+	"github.com/andresmejia3/hide/pkg/stego"
+	"github.com/rs/zerolog/log"
+	"github.com/spf13/cobra"
+)
+
+var (
+	rImage    string
+	rPass     string
+	rKey      string
+	rEncoding string
+)
+
+var revealCmd = &cobra.Command{
+	Use:   "reveal",
+	Short: "Reveal a message in an image",
+	Run: func(cmd *cobra.Command, args []string) {
+		if rPass != "" && rKey != "" {
+			log.Fatal().Msg("passphrase and key-path cannot both be provided")
+		}
+
+		rArgs := &stego.RevealArgs{
+			ImagePath:      &rImage,
+			Passphrase:     &rPass,
+			PrivateKeyPath: &rKey,
+			Encoding:       &rEncoding,
+			Verbose:        &verbose,
+		}
+
+		if err := stego.Reveal(rArgs); err != nil {
+			log.Fatal().Err(err).Msg("Failed to reveal message")
+		}
+	},
+}
+
+func init() {
+	rootCmd.AddCommand(revealCmd)
+
+	revealCmd.Flags().StringVarP(&rImage, "image-path", "i", "", "Path to image (required)")
+	revealCmd.MarkFlagRequired("image-path")
+	revealCmd.Flags().StringVarP(&rPass, "passphrase", "p", "", "Passphrase to decrypt the message")
+	revealCmd.Flags().StringVarP(&rKey, "key-path", "k", "", "Path to .pem file containing your private key")
+	revealCmd.Flags().StringVarP(&rEncoding, "encoding", "e", "utf8", "Encoding used to conceal message")
+}
