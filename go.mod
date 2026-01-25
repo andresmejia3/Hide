@@ -3,6 +3,8 @@ module github.com/andresmejia3/hide
 go 1.25.6
 
 require (
+	github.com/klauspost/cpuid/v2 v2.2.7 // indirect
+	github.com/klauspost/reedsolomon v1.12.1
 	github.com/rs/zerolog v1.32.0
 	github.com/schollz/progressbar/v3 v3.14.1
 	github.com/spf13/cobra v1.10.2

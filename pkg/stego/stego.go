@@ -3,6 +3,7 @@ package stego
 import (
 	"bufio"
 	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"image"
@@ -11,6 +12,7 @@ import (
 	"math"
 	"os"
 
+	"github.com/klauspost/reedsolomon"
 	"github.com/rs/zerolog/log"
 	"github.com/schollz/progressbar/v3"
 )
@@ -97,6 +99,12 @@ func Conceal(args *ConcealArgs) error {
 		if err != nil {
 			return fmt.Errorf("RSA encryption failed: %v", err)
 		}
+	}
+
+	// Apply Reed-Solomon Error Correction
+	messageBytes, err = addReedSolomon(messageBytes)
+	if err != nil {
+		return fmt.Errorf("failed to apply Reed-Solomon encoding: %v", err)
 	}
 
 	totalBitsToBeWritten := len(messageBytes) * 8
@@ -247,46 +255,8 @@ func Conceal(args *ConcealArgs) error {
 					return errors.New("image too small for DCT message")
 				}
 
-				// Extract Blue channel 8x8 block
-				var block [8][8]float64
-				baseX, baseY := blockX*8, blockY*8
-				for bx := 0; bx < 8; bx++ {
-					for by := 0; by < 8; by++ {
-						pix := getPixel(outputImage, baseX+bx, baseY+by)
-						block[bx][by] = float64(pix[2]) // Blue channel
-					}
-				}
-
-				// DCT
-				dctBlock := dct2d(block)
-
-				// Embed bit in (4,4) coefficient
-				// Use a scaling factor to make the embedding robust against float->uint8 conversion noise
-				const dctScale = 10.0
 				bit := getBitUint8(encryptedByte, i)
-				val := dctBlock[4][4]
-				q := int(math.Round(val / dctScale))
-
-				// Ensure q % 2 matches the bit
-				if (q%2+2)%2 != bit {
-					if val < float64(q)*dctScale {
-						q--
-					} else {
-						q++
-					}
-				}
-				dctBlock[4][4] = float64(q) * dctScale
-
-				// IDCT
-				idctBlock := idct2d(dctBlock)
-
-				// Write back
-				for bx := 0; bx < 8; bx++ {
-					for by := 0; by < 8; by++ {
-						pix := getPixel(outputImage, baseX+bx, baseY+by)
-						pix[2] = uint8(math.Max(0, math.Min(255, idctBlock[bx][by])))
-					}
-				}
+				embedDCTBlock(outputImage, blockX, blockY, bit)
 				blockX++
 			}
 		}
@@ -530,22 +500,7 @@ func Reveal(args *RevealArgs) error {
 				return errors.New("image too small for DCT message")
 			}
 
-			// Extract Blue channel 8x8 block
-			var block [8][8]float64
-			baseX, baseY := blockX*8, blockY*8
-			for bx := 0; bx < 8; bx++ {
-				for by := 0; by < 8; by++ {
-					pix := getPixel(img, baseX+bx, baseY+by)
-					block[bx][by] = float64(pix[2])
-				}
-			}
-
-			// DCT
-			dctBlock := dct2d(block)
-			const dctScale = 10.0
-			q := int(math.Round(dctBlock[4][4] / dctScale))
-
-			if (q%2+2)%2 != 0 {
+			if decodeDCTBlock(img, blockX, blockY) != 0 {
 				messageBytes[byteIndex] = setBitUint8(messageBytes[byteIndex], numBitsRead)
 			} else {
 				messageBytes[byteIndex] = clearBitUint8(messageBytes[byteIndex], numBitsRead)
@@ -581,24 +536,30 @@ func Reveal(args *RevealArgs) error {
 		}
 	}
 
+	// Recover data using Reed-Solomon
+	recoveredBytes, err := removeReedSolomon(messageBytes)
+	if err != nil {
+		return fmt.Errorf("Reed-Solomon reconstruction failed: %v", err)
+	}
+
 	var message string
 
 	if *args.Passphrase != "" {
-		decrypted, err := decrypt(messageBytes, *args.Passphrase, salt)
+		decrypted, err := decrypt(recoveredBytes, *args.Passphrase, salt)
 		if err != nil {
 			return fmt.Errorf("failed to decrypt message: %v", err)
 		}
 		message = string(decrypted)
 
 	} else if *args.PrivateKeyPath != "" {
-		decryptedBytes, err := decryptRSA(messageBytes, *args.PrivateKeyPath)
+		decryptedBytes, err := decryptRSA(recoveredBytes, *args.PrivateKeyPath)
 		if err != nil {
 			return fmt.Errorf("RSA decryption failed: %v", err)
 		}
 		message = string(decryptedBytes)
 
 	} else {
-		message = string(messageBytes)
+		message = string(recoveredBytes)
 	}
 
 	if args.Output != nil && *args.Output != "" {
@@ -607,4 +568,142 @@ func Reveal(args *RevealArgs) error {
 		fmt.Println(message)
 	}
 	return nil
+}
+
+func embedDCTBlock(img *image.NRGBA, blockX, blockY int, bit int) {
+	// Extract Blue channel 8x8 block
+	var block [8][8]float64
+	baseX, baseY := blockX*8, blockY*8
+	for bx := 0; bx < 8; bx++ {
+		for by := 0; by < 8; by++ {
+			pix := getPixel(img, baseX+bx, baseY+by)
+			block[bx][by] = float64(pix[2]) // Blue channel
+		}
+	}
+
+	// DCT
+	dctBlock := dct2d(block)
+
+	// Embed bit in (4,4) coefficient
+	// Use a scaling factor to make the embedding robust against float->uint8 conversion noise
+	const dctScale = 10.0
+	val := dctBlock[4][4]
+	q := int(math.Round(val / dctScale))
+
+	// Ensure q % 2 matches the bit
+	if (q%2+2)%2 != bit {
+		if val < float64(q)*dctScale {
+			q--
+		} else {
+			q++
+		}
+	}
+	dctBlock[4][4] = float64(q) * dctScale
+
+	// IDCT
+	idctBlock := idct2d(dctBlock)
+
+	// Write back
+	for bx := 0; bx < 8; bx++ {
+		for by := 0; by < 8; by++ {
+			pix := getPixel(img, baseX+bx, baseY+by)
+			pix[2] = uint8(math.Max(0, math.Min(255, idctBlock[bx][by])))
+		}
+	}
+}
+
+func decodeDCTBlock(img *image.NRGBA, blockX, blockY int) int {
+	// Extract Blue channel 8x8 block
+	var block [8][8]float64
+	baseX, baseY := blockX*8, blockY*8
+	for bx := 0; bx < 8; bx++ {
+		for by := 0; by < 8; by++ {
+			pix := getPixel(img, baseX+bx, baseY+by)
+			block[bx][by] = float64(pix[2])
+		}
+	}
+
+	// DCT
+	dctBlock := dct2d(block)
+	const dctScale = 10.0
+	q := int(math.Round(dctBlock[4][4] / dctScale))
+
+	if (q%2+2)%2 != 0 {
+		return 1
+	}
+	return 0
+}
+
+// Reed-Solomon Configuration
+const (
+	rsDataShards   = 4
+	rsParityShards = 2
+)
+
+func addReedSolomon(data []byte) ([]byte, error) {
+	enc, err := reedsolomon.New(rsDataShards, rsParityShards)
+	if err != nil {
+		return nil, err
+	}
+
+	// Prepend length (4 bytes) to handle padding later
+	length := uint32(len(data))
+	header := make([]byte, 4)
+	binary.BigEndian.PutUint32(header, length)
+	payload := append(header, data...)
+
+	// Split into shards
+	shards, err := enc.Split(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	// Encode parity
+	if err := enc.Encode(shards); err != nil {
+		return nil, err
+	}
+
+	// Join all shards (data + parity)
+	var output []byte
+	for _, shard := range shards {
+		output = append(output, shard...)
+	}
+	return output, nil
+}
+
+func removeReedSolomon(data []byte) ([]byte, error) {
+	enc, err := reedsolomon.New(rsDataShards, rsParityShards)
+	if err != nil {
+		return nil, err
+	}
+
+	// Split into shards (data + parity)
+	shards, err := enc.Split(data)
+	if err != nil {
+		return nil, err
+	}
+
+	// Verify and Reconstruct if necessary
+	if ok, _ := enc.Verify(shards); !ok {
+		if err := enc.Reconstruct(shards); err != nil {
+			return nil, err
+		}
+	}
+
+	// Join data shards only
+	var joined []byte
+	for i := 0; i < rsDataShards; i++ {
+		joined = append(joined, shards[i]...)
+	}
+
+	// Read original length
+	if len(joined) < 4 {
+		return nil, errors.New("recovered data too short")
+	}
+	length := binary.BigEndian.Uint32(joined[:4])
+	if uint32(len(joined)) < 4+length {
+		return nil, errors.New("recovered data length mismatch")
+	}
+
+	return joined[4 : 4+length], nil
 }
