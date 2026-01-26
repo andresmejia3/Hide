@@ -1,6 +1,8 @@
 package stego
 
 import (
+	"bytes"
+	"crypto/rand"
 	"image"
 	"image/png"
 	"os"
@@ -10,17 +12,15 @@ import (
 )
 
 func TestEndToEndSteganography(t *testing.T) {
-	// 1. Setup paths
 	tmpDir := t.TempDir()
 	inputPath := filepath.Join(tmpDir, "input.png")
 	outputPath := filepath.Join(tmpDir, "output.png")
 
-	// 2. Create a dummy PNG image (100x99)
 	// We need enough pixels to hold the message + header overhead
 	img := image.NewNRGBA(image.Rect(0, 0, 100, 99))
 	// Fill with some pattern so it's not just zeroes
-	for i := 0; i < len(img.Pix); i++ {
-		img.Pix[i] = uint8(i % 255)
+	if _, err := rand.Read(img.Pix); err != nil {
+		t.Fatalf("Failed to create random image: %v", err)
 	}
 
 	f, err := os.Create(inputPath)
@@ -32,7 +32,6 @@ func TestEndToEndSteganography(t *testing.T) {
 	}
 	f.Close()
 
-	// 3. Define Arguments
 	message := "This is an integration test message!"
 	passphrase := "correct-horse-battery-staple"
 	bits := 2
@@ -41,7 +40,7 @@ func TestEndToEndSteganography(t *testing.T) {
 	encoding := "utf8"
 	strategy := "lsb"
 
-	cArgs := &ConcealArgs{
+	if err := Conceal(&ConcealArgs{
 		ImagePath:         &inputPath,
 		Output:            &outputPath,
 		Message:           &message,
@@ -53,60 +52,47 @@ func TestEndToEndSteganography(t *testing.T) {
 		Encoding:          &encoding,
 		PublicKeyPath:     new(string), // Empty string
 		Strategy:          &strategy,
-	}
-
-	// 4. Run Conceal
-	if err := Conceal(cArgs); err != nil {
+	}); err != nil {
 		t.Fatalf("Conceal failed: %v", err)
 	}
 
-	// 5. Run Reveal
-	rArgs := &RevealArgs{
+	revealedBytes, err := Reveal(&RevealArgs{
 		ImagePath:      &outputPath,
 		Passphrase:     &passphrase,
 		Verbose:        &verbose,
 		Encoding:       &encoding,
 		PrivateKeyPath: new(string), // Empty string
 		Strategy:       &strategy,
-	}
-
-	revealedBytes, err := Reveal(rArgs)
-
-	output := string(revealedBytes)
-
+	})
 	if err != nil {
 		t.Fatalf("Reveal failed: %v", err)
 	}
 
-	// 6. Verify
+	output := string(revealedBytes)
 	if output != message {
 		t.Errorf("Revealed message did not match.\nExpected: %q\nGot:      %q", message, output)
 	}
 }
 
 func TestEndToEndSteganographyRSA(t *testing.T) {
-	// 1. Setup paths
 	tmpDir := t.TempDir()
 	inputPath := filepath.Join(tmpDir, "input_rsa.png")
 	outputPath := filepath.Join(tmpDir, "output_rsa.png")
 
-	// 2. Generate RSA Keys
 	if err := GenerateRSAKeys(2048, tmpDir); err != nil {
 		t.Fatalf("Failed to generate keys: %v", err)
 	}
 	pubKeyPath := filepath.Join(tmpDir, "public.pem")
 	privKeyPath := filepath.Join(tmpDir, "private.pem")
 
-	// 3. Create dummy image
 	img := image.NewNRGBA(image.Rect(0, 0, 100, 99))
-	for i := 0; i < len(img.Pix); i++ {
-		img.Pix[i] = uint8(i % 255)
+	if _, err := rand.Read(img.Pix); err != nil {
+		t.Fatalf("Failed to create random image: %v", err)
 	}
 	f, _ := os.Create(inputPath)
 	png.Encode(f, img)
 	f.Close()
 
-	// 4. Define Arguments
 	message := "This is a secure RSA message!"
 	bits := 2
 	channels := 3
@@ -115,7 +101,7 @@ func TestEndToEndSteganographyRSA(t *testing.T) {
 	emptyPass := ""
 	strategy := "lsb"
 
-	cArgs := &ConcealArgs{
+	if err := Conceal(&ConcealArgs{
 		ImagePath:         &inputPath,
 		Output:            &outputPath,
 		Message:           &message,
@@ -127,30 +113,23 @@ func TestEndToEndSteganographyRSA(t *testing.T) {
 		Encoding:          &encoding,
 		PublicKeyPath:     &pubKeyPath,
 		Strategy:          &strategy,
-	}
-
-	// 5. Run Conceal
-	if err := Conceal(cArgs); err != nil {
+	}); err != nil {
 		t.Fatalf("Conceal RSA failed: %v", err)
 	}
 
-	// 6. Run Reveal
-	rArgs := &RevealArgs{
+	revealedBytes, err := Reveal(&RevealArgs{
 		ImagePath:      &outputPath,
 		Passphrase:     &emptyPass,
 		Verbose:        &verbose,
 		Encoding:       &encoding,
 		PrivateKeyPath: &privKeyPath,
 		Strategy:       &strategy,
-	}
-
-	revealedBytes, err := Reveal(rArgs)
-	output := strings.TrimSpace(string(revealedBytes))
-
+	})
 	if err != nil {
 		t.Fatalf("Reveal RSA failed: %v", err)
 	}
 
+	output := strings.TrimSpace(string(revealedBytes))
 	if output != message {
 		t.Errorf("Revealed RSA message did not match.\nExpected: %q\nGot:      %q", message, output)
 	}
@@ -163,6 +142,9 @@ func TestWrongPassword(t *testing.T) {
 
 	// Create dummy image
 	img := image.NewNRGBA(image.Rect(0, 0, 100, 100))
+	if _, err := rand.Read(img.Pix); err != nil {
+		t.Fatalf("Failed to create random image: %v", err)
+	}
 	f, _ := os.Create(inputPath)
 	png.Encode(f, img)
 	f.Close()
@@ -201,10 +183,10 @@ func TestWrongPassword(t *testing.T) {
 		Encoding:       &encoding,
 		PrivateKeyPath: new(string),
 		Strategy:       &strategy,
+		Writer:         &bytes.Buffer{}, // Discard output
 	}
 
-	// We expect an error, so we don't need the revealed bytes
-	_, err := Reveal(rArgs)
+	_, err := Reveal(rArgs) // We expect an error, so the revealed bytes are not needed.
 
 	if err == nil {
 		t.Error("Expected error when revealing with wrong password, got nil")
@@ -218,9 +200,10 @@ func TestEndToEndSteganographyDCT(t *testing.T) {
 
 	// Create dummy image (needs to be large enough for 8x8 blocks)
 	// 200x200 = 625 blocks.
+	// 200x200 image for DCT blocks.
 	img := image.NewNRGBA(image.Rect(0, 0, 200, 200))
-	for i := 0; i < len(img.Pix); i++ {
-		img.Pix[i] = uint8(i % 255)
+	if _, err := rand.Read(img.Pix); err != nil {
+		t.Fatalf("Failed to create random image: %v", err)
 	}
 	f, _ := os.Create(inputPath)
 	png.Encode(f, img)
@@ -252,7 +235,14 @@ func TestEndToEndSteganographyDCT(t *testing.T) {
 		t.Fatalf("Conceal DCT failed: %v", err)
 	}
 
-	rArgs := &RevealArgs{ImagePath: &outputPath, Passphrase: &passphrase, Verbose: &verbose, Encoding: &encoding, PrivateKeyPath: new(string), Strategy: &strategy}
+	rArgs := &RevealArgs{
+		ImagePath:      &outputPath,
+		Passphrase:     &passphrase,
+		Verbose:        &verbose,
+		Encoding:       &encoding,
+		PrivateKeyPath: new(string),
+		Strategy:       &strategy,
+	}
 
 	revealedBytes, err := Reveal(rArgs)
 	if err != nil {
@@ -261,11 +251,183 @@ func TestEndToEndSteganographyDCT(t *testing.T) {
 
 	output := string(revealedBytes)
 
-	if err != nil {
-		t.Fatalf("Reveal DCT failed: %v", err)
-	}
-
 	if output != message {
 		t.Errorf("Revealed DCT message did not match.\nExpected: %q\nGot:      %q", message, output)
+	}
+}
+
+func TestCapacityExceeded(t *testing.T) {
+	tmpDir := t.TempDir()
+	inputPath := filepath.Join(tmpDir, "input_small.png")
+	outputPath := filepath.Join(tmpDir, "output_small.png")
+
+	// Small image: 10x10 = 100 pixels.
+	// Header needs 35 pixels.
+	// Remaining 65 pixels.
+	// 3 channels * 8 bits = 24 bits/pixel.
+	// Capacity approx 65 * 24 = 1560 bits = 195 bytes.
+	// Use a small 10x10 image which has a low capacity.
+	img := image.NewNRGBA(image.Rect(0, 0, 10, 10))
+	if _, err := rand.Read(img.Pix); err != nil {
+		t.Fatalf("Failed to create random image: %v", err)
+	}
+	f, _ := os.Create(inputPath)
+	png.Encode(f, img)
+	f.Close()
+
+	// Message larger than capacity (e.g., 1KB)
+	message := strings.Repeat("A", 1024)
+	passphrase := "pass"
+	bits := 8
+	channels := 3
+	verbose := false
+	encoding := "utf8"
+	strategy := "lsb"
+
+	cArgs := &ConcealArgs{
+		ImagePath:         &inputPath,
+		Output:            &outputPath,
+		Message:           &message,
+		File:              new(string),
+		Passphrase:        &passphrase,
+		NumBitsPerChannel: &bits,
+		NumChannels:       &channels,
+		Verbose:           &verbose,
+		Encoding:          &encoding,
+		PublicKeyPath:     new(string),
+		Strategy:          &strategy,
+	}
+
+	if err := Conceal(cArgs); err == nil {
+		t.Error("Expected error for message exceeding capacity, got nil")
+	}
+}
+
+func TestCorruptedHeader(t *testing.T) {
+	tmpDir := t.TempDir()
+	inputPath := filepath.Join(tmpDir, "input_corrupt.png")
+	outputPath := filepath.Join(tmpDir, "output_corrupt.png")
+
+	img := image.NewNRGBA(image.Rect(0, 0, 100, 100))
+	if _, err := rand.Read(img.Pix); err != nil {
+		t.Fatalf("Failed to create random image: %v", err)
+	}
+	f, _ := os.Create(inputPath)
+	png.Encode(f, img)
+	f.Close()
+
+	message := "Secret"
+	passphrase := "pass"
+	bits := 2
+	channels := 3
+	verbose := false
+	encoding := "utf8"
+	strategy := "lsb"
+
+	cArgs := &ConcealArgs{
+		ImagePath:         &inputPath,
+		Output:            &outputPath,
+		Message:           &message,
+		File:              new(string),
+		Passphrase:        &passphrase,
+		NumBitsPerChannel: &bits,
+		NumChannels:       &channels,
+		Verbose:           &verbose,
+		Encoding:          &encoding,
+		PublicKeyPath:     new(string),
+		Strategy:          &strategy,
+	}
+
+	if err := Conceal(cArgs); err != nil {
+		t.Fatalf("Conceal failed: %v", err)
+	}
+
+	// Corrupt the header (Pixel 0: Bits Per Channel)
+	// We set it to 0, which is invalid (must be 1-8)
+	// Corrupt the header by setting the bits-per-channel to an invalid value (0).
+	imgRaw, err := loadImage(outputPath)
+	if err != nil {
+		t.Fatalf("Failed to load output image: %v", err)
+	}
+	outImg := copyImage(imgRaw)
+	outImg.Pix[0] = 0
+	outImg.Pix[1] = 0
+	outImg.Pix[2] = 0
+	outImg.Pix[3] = 0
+
+	fOut, _ := os.Create(outputPath)
+	png.Encode(fOut, outImg)
+	fOut.Close()
+
+	rArgs := &RevealArgs{
+		ImagePath:      &outputPath,
+		Passphrase:     &passphrase,
+		Verbose:        &verbose,
+		Encoding:       &encoding,
+		PrivateKeyPath: new(string),
+		Strategy:       &strategy,
+		Writer:         &bytes.Buffer{},
+	}
+
+	if _, err := Reveal(rArgs); err == nil {
+		t.Error("Expected error when revealing corrupted header, got nil")
+	}
+}
+
+func TestLSBMatching(t *testing.T) {
+	tmpDir := t.TempDir()
+	inputPath := filepath.Join(tmpDir, "input_lsbm.png")
+	outputPath := filepath.Join(tmpDir, "output_lsbm.png")
+
+	img := image.NewNRGBA(image.Rect(0, 0, 100, 100))
+	if _, err := rand.Read(img.Pix); err != nil {
+		t.Fatalf("Failed to create random image: %v", err)
+	}
+	f, _ := os.Create(inputPath)
+	png.Encode(f, img)
+	f.Close()
+
+	message := "LSB Matching Test"
+	passphrase := "pass"
+	bits := 2
+	channels := 3
+	verbose := false
+	encoding := "utf8"
+	strategy := "lsb-matching"
+
+	cArgs := &ConcealArgs{
+		ImagePath:         &inputPath,
+		Output:            &outputPath,
+		Message:           &message,
+		File:              new(string),
+		Passphrase:        &passphrase,
+		NumBitsPerChannel: &bits,
+		NumChannels:       &channels,
+		Verbose:           &verbose,
+		Encoding:          &encoding,
+		PublicKeyPath:     new(string),
+		Strategy:          &strategy,
+	}
+
+	if err := Conceal(cArgs); err != nil {
+		t.Fatalf("Conceal failed: %v", err)
+	}
+
+	rArgs := &RevealArgs{
+		ImagePath:      &outputPath,
+		Passphrase:     &passphrase,
+		Verbose:        &verbose,
+		Encoding:       &encoding,
+		PrivateKeyPath: new(string),
+		Strategy:       &strategy,
+	}
+
+	revealedBytes, err := Reveal(rArgs)
+	if err != nil {
+		t.Fatalf("Reveal failed: %v", err)
+	}
+
+	if string(revealedBytes) != message {
+		t.Errorf("Revealed message mismatch. Got %s, want %s", string(revealedBytes), message)
 	}
 }

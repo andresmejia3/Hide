@@ -67,6 +67,40 @@ func (it *randomIterator) next() (int, int, bool) {
 	return idx % it.width, idx / it.width, true
 }
 
+// dctIterator traverses 8x8 blocks row by row.
+// It starts at blockY=1 to reserve the first 8 pixel rows for the header.
+type dctIterator struct {
+	width, height  int
+	blockX, blockY int
+	blocksW        int
+}
+
+func newDctIterator(width, height int) *dctIterator {
+	return &dctIterator{
+		width:   width,
+		height:  height,
+		blocksW: width / 8,
+		blockX:  0,
+		blockY:  1, // Start at second row of blocks
+	}
+}
+
+func (it *dctIterator) next() (int, int, bool) {
+	// Check if the current block is within bounds
+	if it.blockY*8+8 > it.height {
+		return 0, 0, false
+	}
+
+	x, y := it.blockX, it.blockY
+
+	it.blockX++
+	if it.blockX >= it.blocksW {
+		it.blockX = 0
+		it.blockY++
+	}
+	return x, y, true
+}
+
 type ImageStepper struct {
 	x                      int
 	y                      int
@@ -81,9 +115,11 @@ type ImageStepper struct {
 	iterator pixelIterator
 }
 
-func makeImageStepper(numBitsToUsePerChannel int, width int, height int, channelSize int, seed int64) *ImageStepper {
+func makeImageStepper(numBitsToUsePerChannel int, width int, height int, channelSize int, seed int64, strategy string) (*ImageStepper, error) {
 	var it pixelIterator
-	if seed != 0 {
+	if strategy == "dct" {
+		it = newDctIterator(width, height)
+	} else if seed != 0 {
 		it = newRandomIterator(width, height, seed)
 	} else {
 		it = newLinearIterator(width, height)
@@ -103,11 +139,14 @@ func makeImageStepper(numBitsToUsePerChannel int, width int, height int, channel
 	}
 
 	// Prime the iterator so s.x and s.y reflect the first pixel
-	x, y, _ := s.iterator.next()
+	x, y, ok := s.iterator.next()
+	if !ok {
+		return nil, errors.New("image too small for selected strategy")
+	}
 	s.x = x
 	s.y = y
 
-	return s
+	return s, nil
 }
 
 func (self *ImageStepper) step() error {
@@ -121,7 +160,6 @@ func (self *ImageStepper) step() error {
 
 	if self.channel >= self.channelSize {
 		self.channel = 0
-		// Move to next pixel
 		x, y, ok := self.iterator.next()
 		if !ok {
 			return errors.New("iterator exhausted: stepped past the last available pixel")
@@ -133,9 +171,12 @@ func (self *ImageStepper) step() error {
 	return nil
 }
 
-func (self *ImageStepper) skipPixel() {
-	// Just advance the iterator
-	x, y, _ := self.iterator.next()
+func (self *ImageStepper) skipPixel() error {
+	x, y, ok := self.iterator.next()
+	if !ok {
+		return errors.New("iterator exhausted: cannot skip pixel")
+	}
 	self.x = x
 	self.y = y
+	return nil
 }

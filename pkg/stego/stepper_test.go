@@ -10,26 +10,27 @@ func TestImageStepper(t *testing.T) {
 	channels := 3
 	bitsPerChannel := 1
 
-	stepper := makeImageStepper(bitsPerChannel, width, height, channels, 0)
+	stepper, err := makeImageStepper(bitsPerChannel, width, height, channels, 0, "lsb")
+	if err != nil {
+		t.Fatalf("Failed to create stepper: %v", err)
+	}
 
-	// Test Initial State
 	if stepper.x != 0 || stepper.y != 0 || stepper.channel != 0 {
 		t.Errorf("Initial state incorrect: %+v", stepper)
 	}
 
-	// Step 1: Should move to next channel (0 -> 1) because bitsPerChannel is 1
+	// Should move to next channel (0 -> 1) because bitsPerChannel is 1
 	stepper.step()
 	if stepper.channel != 1 || stepper.x != 0 {
 		t.Errorf("Step 1 failed: %+v", stepper)
 	}
 
-	// Step 2: Move to channel 2
 	stepper.step()
 	if stepper.channel != 2 {
 		t.Errorf("Step 2 failed: %+v", stepper)
 	}
 
-	// Step 3: Move to next pixel (channel 2 -> channel 0, x 0 -> 1)
+	// Move to next pixel (channel 2 -> channel 0, x 0 -> 1)
 	stepper.step()
 	if stepper.channel != 0 || stepper.x != 1 || stepper.y != 0 {
 		t.Errorf("Step 3 (pixel change) failed: %+v", stepper)
@@ -49,9 +50,11 @@ func TestImageStepper(t *testing.T) {
 
 func TestImageStepperOverflow(t *testing.T) {
 	// 2x1 image, 1 channel, 1 bit per channel. Capacity = 2 bits.
-	stepper := makeImageStepper(1, 2, 1, 1, 0)
+	stepper, err := makeImageStepper(1, 2, 1, 1, 0, "lsb")
+	if err != nil {
+		t.Fatalf("Failed to create stepper: %v", err)
+	}
 
-	// Step once (ok)
 	if err := stepper.step(); err != nil {
 		t.Errorf("First step should succeed")
 	}

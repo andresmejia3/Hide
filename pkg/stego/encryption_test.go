@@ -27,10 +27,8 @@ func TestSymmetricEncryption(t *testing.T) {
 }
 
 func TestRSAEncryption(t *testing.T) {
-	// Create a temporary directory for keys
 	tmpDir := t.TempDir()
 
-	// Generate Keys
 	err := GenerateRSAKeys(2048, tmpDir)
 	if err != nil {
 		t.Fatalf("Failed to generate RSA keys: %v", err)
@@ -39,7 +37,6 @@ func TestRSAEncryption(t *testing.T) {
 	pubKeyPath := filepath.Join(tmpDir, "public.pem")
 	privKeyPath := filepath.Join(tmpDir, "private.pem")
 
-	// Verify files exist
 	if _, err := os.Stat(pubKeyPath); os.IsNotExist(err) {
 		t.Error("Public key file was not created")
 	}
@@ -47,7 +44,6 @@ func TestRSAEncryption(t *testing.T) {
 		t.Error("Private key file was not created")
 	}
 
-	// Test Encryption/Decryption
 	message := []byte("Secret RSA Message")
 	encrypted, err := encryptRSA(message, pubKeyPath)
 	if err != nil {

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/andresmejia3/hide/pkg/stego"
@@ -33,20 +32,23 @@ var revealCmd = &cobra.Command{
 			Encoding:       &rEncoding,
 			Verbose:        &verbose,
 			Strategy:       &rStrategy,
-		}
-
-		revealedBytes, err := stego.Reveal(rArgs)
-		if err != nil {
-			log.Fatal().Err(err).Msg("Failed to reveal message")
+			Writer:         os.Stdout,
 		}
 
 		if rOut != "" {
-			if err := os.WriteFile(rOut, revealedBytes, 0644); err != nil {
-				log.Fatal().Err(err).Msg("Failed to write revealed message to output file")
+			f, err := os.Create(rOut)
+			if err != nil {
+				log.Fatal().Err(err).Msg("Failed to create output file")
 			}
-		} else {
-			fmt.Println(string(revealedBytes))
+			defer f.Close()
+			rArgs.Writer = f
 		}
+
+		_, err := stego.Reveal(rArgs)
+		if err != nil {
+			log.Fatal().Err(err).Msg("Failed to reveal message")
+		}
+		// If writing to stdout, Reveal handles it via rArgs.Writer
 	},
 }
 

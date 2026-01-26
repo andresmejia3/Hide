@@ -70,18 +70,15 @@ func decryptWithKey(data []byte, key []byte) ([]byte, error) {
 }
 
 func GenerateRSAKeys(bits int, outDir string) error {
-	// Generate Private Key
 	privateKey, err := rsa.GenerateKey(rand.Reader, bits)
 	if err != nil {
 		return err
 	}
 
-	// Validate Output Directory
 	if _, err := os.Stat(outDir); os.IsNotExist(err) {
 		return fmt.Errorf("output directory does not exist: %s", outDir)
 	}
 
-	// Save Private Key
 	// Use 0600 permissions to ensure only the owner can read the private key.
 	privFile, err := os.OpenFile(filepath.Join(outDir, "private.pem"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
@@ -98,7 +95,6 @@ func GenerateRSAKeys(bits int, outDir string) error {
 		return err
 	}
 
-	// Generate Public Key
 	publicKey := &privateKey.PublicKey
 	pubFile, err := os.Create(filepath.Join(outDir, "public.pem"))
 	if err != nil {
@@ -123,7 +119,6 @@ func GenerateRSAKeys(bits int, outDir string) error {
 }
 
 func encryptRSA(data []byte, pubKeyPath string) ([]byte, error) {
-	// 1. Load Public Key
 	pubKeyBytes, err := os.ReadFile(pubKeyPath)
 	if err != nil {
 		return nil, err
@@ -141,25 +136,22 @@ func encryptRSA(data []byte, pubKeyPath string) ([]byte, error) {
 		return nil, fmt.Errorf("key is not of type RSA")
 	}
 
-	// 2. Generate Random AES Key (32 bytes for AES-256)
 	aesKey := make([]byte, 32)
 	if _, err := rand.Read(aesKey); err != nil {
 		return nil, err
 	}
 
-	// 3. Encrypt the AES Key with RSA
 	encryptedKey, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, rsaPub, aesKey, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	// 4. Encrypt the actual data with the AES Key
 	encryptedData, err := encryptWithKey(data, aesKey)
 	if err != nil {
 		return nil, err
 	}
 
-	// 5. Combine: [Length of Encrypted Key (4 bytes)] + [Encrypted Key] + [Encrypted Data]
+	// Format: [Key Length (4 bytes)] + [Encrypted Key] + [Encrypted Data]
 	// We need the length because RSA key size might vary (2048 vs 4096 bits)
 	payload := make([]byte, 4+len(encryptedKey)+len(encryptedData))
 	binary.BigEndian.PutUint32(payload[0:4], uint32(len(encryptedKey)))
@@ -170,7 +162,6 @@ func encryptRSA(data []byte, pubKeyPath string) ([]byte, error) {
 }
 
 func decryptRSA(data []byte, privKeyPath string) (plaintext []byte, err error) {
-	// 1. Load Private Key
 	privKeyBytes, err := os.ReadFile(privKeyPath)
 	if err != nil {
 		return nil, err
@@ -184,7 +175,6 @@ func decryptRSA(data []byte, privKeyPath string) (plaintext []byte, err error) {
 		return nil, err
 	}
 
-	// 2. Parse Payload Structure
 	if len(data) < 4 {
 		return nil, fmt.Errorf("invalid data: too short")
 	}
@@ -196,13 +186,11 @@ func decryptRSA(data []byte, privKeyPath string) (plaintext []byte, err error) {
 	encryptedKey := data[4 : 4+keyLen]
 	encryptedData := data[4+keyLen:]
 
-	// 3. Decrypt AES Key with RSA
 	aesKey, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, priv, encryptedKey, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt AES key: %v", err)
 	}
 
-	// 4. Decrypt Data with AES Key
 	plaintext, err = decryptWithKey(encryptedData, aesKey)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt data: %v", err)

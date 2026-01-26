@@ -26,6 +26,9 @@ var concealCmd = &cobra.Command{
 		if cPass != "" && cKey != "" {
 			log.Fatal().Msg("passphrase and key-path cannot both be provided")
 		}
+		if cMsg != "" && cFile != "" {
+			log.Fatal().Msg("message and file flags cannot both be provided; file takes precedence")
+		}
 		if cBits < 0 || cBits > 8 {
 			log.Fatal().Msg("maximum number of bits to use per channel is 8")
 		}

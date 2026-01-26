@@ -1,6 +1,6 @@
 module github.com/andresmejia3/hide
 
-go 1.25.6
+go 1.25
 
 require (
 	github.com/klauspost/cpuid/v2 v2.2.7 // indirect
