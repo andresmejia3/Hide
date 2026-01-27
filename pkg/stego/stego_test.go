@@ -780,7 +780,11 @@ func TestAnalysisTools(t *testing.T) {
 	png.Encode(f2, img)
 	f2.Close()
 
-	result, err := AnalyzeImages(origPath, stegoPath, heatmapPath)
+	result, err := Analyze(&AnalyzeArgs{
+		OriginalPath: &origPath,
+		StegoPath:    &stegoPath,
+		HeatmapPath:  &heatmapPath,
+	})
 	if err != nil {
 		t.Fatalf("AnalyzeImages failed: %v", err)
 	}

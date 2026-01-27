@@ -59,3 +59,10 @@ func TestRSAEncryption(t *testing.T) {
 		t.Errorf("Decrypted RSA message does not match. Got %s, want %s", decrypted, message)
 	}
 }
+
+func TestRSAKeyGenerationError(t *testing.T) {
+	// Try to generate keys in a non-existent directory
+	if err := GenerateRSAKeys(2048, "/path/to/non/existent/dir/12345"); err == nil {
+		t.Error("Expected error when generating keys in invalid directory, got nil")
+	}
+}

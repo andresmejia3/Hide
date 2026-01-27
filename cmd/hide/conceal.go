@@ -4,6 +4,8 @@ import (
 	"github.com/andresmejia3/hide/pkg/stego"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
+	"os"
+	"path/filepath"
 )
 
 var (
@@ -38,6 +40,20 @@ var concealCmd = &cobra.Command{
 		}
 		if cWorkers < 0 {
 			log.Fatal().Msg("number of workers cannot be negative")
+		}
+
+		// Default output handling
+		if cOut == "" {
+			outputDir := "output"
+			if err := os.MkdirAll(outputDir, 0755); err != nil {
+				log.Fatal().Err(err).Msg("Failed to create default output directory")
+			}
+			cOut = filepath.Join(outputDir, "hidden.png")
+		} else {
+			// Ensure the directory for the provided output path exists
+			if err := os.MkdirAll(filepath.Dir(cOut), 0755); err != nil {
+				log.Fatal().Err(err).Msg("Failed to create output directory")
+			}
 		}
 
 		cArgs := &stego.ConcealArgs{

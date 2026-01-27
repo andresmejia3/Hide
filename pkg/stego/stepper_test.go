@@ -64,3 +64,68 @@ func TestImageStepperOverflow(t *testing.T) {
 		t.Error("Expected error when stepping past image bounds, got nil")
 	}
 }
+
+func TestRandomIteratorCoverage(t *testing.T) {
+	// 10x10 image = 100 pixels.
+	// Random iterator skips first 35.
+	// Should yield 65 unique coordinates.
+	width, height := 10, 10
+	seed := int64(12345)
+	it := newRandomIterator(width, height, seed)
+
+	visited := make(map[int]bool)
+	count := 0
+
+	for {
+		x, y, ok := it.next()
+		if !ok {
+			break
+		}
+		idx := y*width + x
+		if visited[idx] {
+			t.Errorf("Random iterator visited pixel (%d,%d) twice", x, y)
+		}
+		visited[idx] = true
+		count++
+	}
+
+	expected := (width * height) - 35
+	if count != expected {
+		t.Errorf("Random iterator visited %d pixels, want %d", count, expected)
+	}
+}
+
+func TestDCTIteratorBounds(t *testing.T) {
+	// 16x16 image.
+	// Blocks are 8x8.
+	// Width in blocks = 2.
+	// Height in blocks = 2.
+	// DCT iterator skips the first row of blocks (y=0).
+	// So it should visit (0,1) and (1,1).
+	width, height := 16, 16
+	it := newDctIterator(width, height)
+
+	// Block 1: (0, 1)
+	x, y, ok := it.next()
+	if !ok {
+		t.Fatal("DCT iterator finished too early (step 1)")
+	}
+	if x != 0 || y != 1 {
+		t.Errorf("DCT iterator step 1: got (%d,%d), want (0,1)", x, y)
+	}
+
+	// Block 2: (1, 1)
+	x, y, ok = it.next()
+	if !ok {
+		t.Fatal("DCT iterator finished too early (step 2)")
+	}
+	if x != 1 || y != 1 {
+		t.Errorf("DCT iterator step 2: got (%d,%d), want (1,1)", x, y)
+	}
+
+	// Should be done
+	_, _, ok = it.next()
+	if ok {
+		t.Error("DCT iterator should be exhausted but returned true")
+	}
+}

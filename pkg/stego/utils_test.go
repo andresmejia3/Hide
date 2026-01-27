@@ -1,6 +1,9 @@
 package stego
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestBitManipulation(t *testing.T) {
 	// 0000 0000 | (1<<2) = 0000 0100 (4)
@@ -32,5 +35,26 @@ func TestUint8BitManipulation(t *testing.T) {
 
 	if got := getBitUint8(4, 2); got != 1 {
 		t.Errorf("getBitUint8(4, 2) = %d; want 1", got)
+	}
+}
+
+func TestDCTRoundTrip(t *testing.T) {
+	// Create a test 8x8 block with some gradient data
+	var block [8][8]float64
+	for i := 0; i < 8; i++ {
+		for j := 0; j < 8; j++ {
+			block[i][j] = float64((i + j) * 10)
+		}
+	}
+
+	dct := dct2d(block)
+	idct := idct2d(dct)
+
+	for i := 0; i < 8; i++ {
+		for j := 0; j < 8; j++ {
+			if math.Abs(block[i][j]-idct[i][j]) > 0.0001 {
+				t.Errorf("DCT round trip mismatch at %d,%d: got %f, want %f", i, j, idct[i][j], block[i][j])
+			}
+		}
 	}
 }

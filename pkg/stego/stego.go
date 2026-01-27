@@ -65,6 +65,12 @@ type VerifyResult struct {
 	BitsPerChannel int
 }
 
+type AnalyzeArgs struct {
+	OriginalPath *string
+	StegoPath    *string
+	HeatmapPath  *string
+}
+
 func Conceal(args *ConcealArgs) error {
 	fmt.Fprintln(os.Stderr, " 📂 Loading image...")
 	img, err := loadImage(*args.ImagePath)
@@ -134,6 +140,20 @@ func Conceal(args *ConcealArgs) error {
 	pixels := outputImage.Pix
 
 	totalBitsAvailable := numBitsAvailable(width, height, numChannels, numBitsPerChannel)
+	
+	// Estimate required capacity
+	// Header (35 pixels * channels * bits) is skipped by stepper logic, but let's approximate.
+	// We need:
+	// Header pixels (skipped)
+	// Message Length (32 bits approx)
+	// Message Body (inputSize * 8)
+	// Reed-Solomon Overhead (approx 1.5x for 4 data / 2 parity)
+	// Encryption overhead (IV/Salt/Key)
+	
+	estimatedBitsNeeded := int(inputSize * 8 * 3 / 2) // Rough 1.5x estimate for RS + overhead
+	if estimatedBitsNeeded > totalBitsAvailable {
+		log.Warn().Int("available", totalBitsAvailable).Int("needed_approx", estimatedBitsNeeded).Msg("Image might be too small for this message")
+	}
 
 	if *args.Verbose {
 		log.Debug().Int("width", width).Int("height", height).Msg("Image dimensions")
