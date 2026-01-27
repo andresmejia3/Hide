@@ -3,6 +3,7 @@ package stego
 import (
 	"bufio"
 	"bytes"
+	"compress/zlib"
 	"context"
 	"crypto/rand"
 	"encoding/binary"
@@ -39,6 +40,7 @@ type ConcealArgs struct {
 	Strategy          *string
 	NumWorkers        *int
 	DryRun            *bool
+	Compress          *bool
 }
 
 type RevealArgs struct {
@@ -243,6 +245,13 @@ func Conceal(args *ConcealArgs) error {
 		if n > 0 {
 			chunk := buffer[:n]
 
+			if args.Compress != nil && *args.Compress {
+				chunk, err = compressData(chunk)
+				if err != nil {
+					return fmt.Errorf("compression failed: %v", err)
+				}
+			}
+
 			if *args.Passphrase != "" {
 				chunk, err = encrypt(chunk, *args.Passphrase, salt)
 				if err != nil {
@@ -347,6 +356,10 @@ func Conceal(args *ConcealArgs) error {
 		strategyID = 1
 	case "dct":
 		strategyID = 2
+	}
+	// Use bit 2 (value 4) to indicate compression
+	if args.Compress != nil && *args.Compress {
+		strategyID = strategyID | 4
 	}
 
 	for i := 8; i < 12; i++ {
@@ -586,6 +599,8 @@ func Reveal(args *RevealArgs) ([]byte, error) {
 		}
 	}
 
+	isCompressed := false
+
 	// Decode Strategy ID from the third pixel
 	channels = pixels[8:12]
 	strategyID := 0
@@ -593,6 +608,12 @@ func Reveal(args *RevealArgs) ([]byte, error) {
 		if getBitUint8(channels[i], 0) != 0 {
 			strategyID = setBit(strategyID, i)
 		}
+	}
+
+	// Check for compression bit (bit 2, value 4)
+	if (strategyID & 4) != 0 {
+		isCompressed = true
+		strategyID = strategyID & 3 // Strip compression bit to get strategy
 	}
 
 	// Auto-detect strategy
@@ -782,6 +803,13 @@ func Reveal(args *RevealArgs) ([]byte, error) {
 			}
 		} else {
 			decrypted = recovered
+		}
+
+		if isCompressed {
+			decrypted, err = decompressData(decrypted)
+			if err != nil {
+				return nil, fmt.Errorf("decompression failed: %v", err)
+			}
 		}
 
 		if _, err := outWriter.Write(decrypted); err != nil {
@@ -1302,4 +1330,27 @@ func removeReedSolomon(data []byte) ([]byte, error) {
 	}
 
 	return joined[8 : 8+length], nil
+}
+
+func compressData(data []byte) ([]byte, error) {
+	var b bytes.Buffer
+	w := zlib.NewWriter(&b)
+	if _, err := w.Write(data); err != nil {
+		return nil, err
+	}
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
+	return b.Bytes(), nil
+}
+
+func decompressData(data []byte) ([]byte, error) {
+	b := bytes.NewReader(data)
+	r, err := zlib.NewReader(b)
+	if err != nil {
+		return nil, err
+	}
+	res, err := io.ReadAll(r)
+	r.Close()
+	return res, err
 }

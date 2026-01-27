@@ -9,39 +9,41 @@ import (
 )
 
 var (
-	rImage    string
-	rPass     string
-	rKey      string
-	rEncoding string
-	rStrategy string
-	rOut      string
-	rWorkers  int
+	revealFlags struct {
+		Image    string
+		Pass     string
+		Key      string
+		Encoding string
+		Strategy string
+		Out      string
+		Workers  int
+	}
 )
 
 var revealCmd = &cobra.Command{
 	Use:   "reveal",
 	Short: "Reveal a message in an image",
 	Run: func(cmd *cobra.Command, args []string) {
-		if rPass != "" && rKey != "" {
+		if revealFlags.Pass != "" && revealFlags.Key != "" {
 			log.Fatal().Msg("passphrase and key-path cannot both be provided")
 		}
-		if rWorkers < 0 {
+		if revealFlags.Workers < 0 {
 			log.Fatal().Msg("number of workers cannot be negative")
 		}
 
 		rArgs := &stego.RevealArgs{
-			ImagePath:      &rImage,
-			Passphrase:     &rPass,
-			PrivateKeyPath: &rKey,
-			Encoding:       &rEncoding,
+			ImagePath:      &revealFlags.Image,
+			Passphrase:     &revealFlags.Pass,
+			PrivateKeyPath: &revealFlags.Key,
+			Encoding:       &revealFlags.Encoding,
 			Verbose:        &verbose,
-			Strategy:       &rStrategy,
+			Strategy:       &revealFlags.Strategy,
 			Writer:         os.Stdout,
-			NumWorkers:     &rWorkers,
+			NumWorkers:     &revealFlags.Workers,
 		}
 
-		if rOut != "" {
-			f, err := os.Create(rOut)
+		if revealFlags.Out != "" {
+			f, err := os.Create(revealFlags.Out)
 			if err != nil {
 				log.Fatal().Err(err).Msg("Failed to create output file")
 			}
@@ -60,12 +62,12 @@ var revealCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(revealCmd)
 
-	revealCmd.Flags().StringVarP(&rImage, "image-path", "i", "", "Path to image (required)")
+	revealCmd.Flags().StringVarP(&revealFlags.Image, "image-path", "i", "", "Path to image (required)")
 	revealCmd.MarkFlagRequired("image-path")
-	revealCmd.Flags().StringVarP(&rPass, "passphrase", "p", "", "Passphrase to decrypt the message")
-	revealCmd.Flags().StringVarP(&rKey, "key-path", "k", "", "Path to .pem file containing your private key")
-	revealCmd.Flags().StringVarP(&rEncoding, "encoding", "e", "utf8", "Encoding used to conceal message")
-	revealCmd.Flags().StringVarP(&rStrategy, "strategy", "s", "dct", "Steganography strategy: lsb, lsb-matching, dct")
-	revealCmd.Flags().StringVarP(&rOut, "output", "o", "", "Output path for revealed message (optional)")
-	revealCmd.Flags().IntVarP(&rWorkers, "workers", "w", 0, "Number of workers to use for concurrency (default: number of CPUs)")
+	revealCmd.Flags().StringVarP(&revealFlags.Pass, "passphrase", "p", "", "Passphrase to decrypt the message")
+	revealCmd.Flags().StringVarP(&revealFlags.Key, "key-path", "k", "", "Path to .pem file containing your private key")
+	revealCmd.Flags().StringVarP(&revealFlags.Encoding, "encoding", "e", "utf8", "Encoding used to conceal message")
+	revealCmd.Flags().StringVarP(&revealFlags.Strategy, "strategy", "s", "dct", "Steganography strategy: lsb, lsb-matching, dct")
+	revealCmd.Flags().StringVarP(&revealFlags.Out, "output", "o", "", "Output path for revealed message (optional)")
+	revealCmd.Flags().IntVarP(&revealFlags.Workers, "workers", "w", 0, "Number of workers to use for concurrency (default: number of CPUs)")
 }
