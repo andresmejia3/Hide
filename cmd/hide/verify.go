@@ -9,9 +9,11 @@ import (
 )
 
 var (
-	vImage   string
-	vPass    string
-	vWorkers int
+	verifyFlags struct {
+		Image   string
+		Pass    string
+		Workers int
+	}
 )
 
 var verifyCmd = &cobra.Command{
@@ -19,15 +21,15 @@ var verifyCmd = &cobra.Command{
 	Short: "Verify the integrity of a stego image",
 	Long:  `Checks if an image contains a valid hidden message and verifies its integrity using Reed-Solomon codes without extracting the full payload.`,
 	Run: func(cmd *cobra.Command, args []string) {
-		if vWorkers < 0 {
+		if verifyFlags.Workers < 0 {
 			log.Fatal().Msg("number of workers cannot be negative")
 		}
 
 		vArgs := &stego.VerifyArgs{
-			ImagePath:  &vImage,
-			Passphrase: &vPass,
+			ImagePath:  &verifyFlags.Image,
+			Passphrase: &verifyFlags.Pass,
 			Verbose:    &verbose,
-			NumWorkers: &vWorkers,
+			NumWorkers: &verifyFlags.Workers,
 		}
 
 		result, err := stego.Verify(vArgs)
@@ -46,8 +48,8 @@ var verifyCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(verifyCmd)
 
-	verifyCmd.Flags().StringVarP(&vImage, "image-path", "i", "", "Path to image (required)")
+	verifyCmd.Flags().StringVarP(&verifyFlags.Image, "image-path", "i", "", "Path to image (required)")
 	verifyCmd.MarkFlagRequired("image-path")
-	verifyCmd.Flags().StringVarP(&vPass, "passphrase", "p", "", "Passphrase used to encrypt (required for correct pixel traversal if used)")
-	verifyCmd.Flags().IntVarP(&vWorkers, "workers", "w", 0, "Number of workers to use for concurrency (default: number of CPUs)")
+	verifyCmd.Flags().StringVarP(&verifyFlags.Pass, "passphrase", "p", "", "Passphrase used to encrypt (required for correct pixel traversal if used)")
+	verifyCmd.Flags().IntVarP(&verifyFlags.Workers, "workers", "w", 0, "Number of workers to use for concurrency (default: number of CPUs)")
 }
