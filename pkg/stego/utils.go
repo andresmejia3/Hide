@@ -168,12 +168,11 @@ func idct1d(in [blockSize]float64) [blockSize]float64 {
 	return out
 }
 
-func dct2d(block [blockSize][blockSize]float64) [blockSize][blockSize]float64 {
+func dct2d(block *[blockSize][blockSize]float64, out *[blockSize][blockSize]float64) {
 	var temp [blockSize][blockSize]float64
 	for i := 0; i < blockSize; i++ {
 		temp[i] = dct1d(block[i])
 	}
-	var out [blockSize][blockSize]float64
 	for j := 0; j < blockSize; j++ {
 		var col [blockSize]float64
 		for i := 0; i < blockSize; i++ {
@@ -184,15 +183,13 @@ func dct2d(block [blockSize][blockSize]float64) [blockSize][blockSize]float64 {
 			out[i][j] = res[i]
 		}
 	}
-	return out
 }
 
-func idct2d(dct [blockSize][blockSize]float64) [blockSize][blockSize]float64 {
+func idct2d(dct *[blockSize][blockSize]float64, out *[blockSize][blockSize]float64) {
 	var temp [blockSize][blockSize]float64
 	for i := 0; i < blockSize; i++ {
 		temp[i] = idct1d(dct[i])
 	}
-	var out [blockSize][blockSize]float64
 	for j := 0; j < blockSize; j++ {
 		var col [blockSize]float64
 		for i := 0; i < blockSize; i++ {
@@ -203,5 +200,4 @@ func idct2d(dct [blockSize][blockSize]float64) [blockSize][blockSize]float64 {
 			out[i][j] = res[i]
 		}
 	}
-	return out
 }

@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"github.com/schollz/progressbar/v3"
 )
 
@@ -21,7 +22,7 @@ type AnalysisResult struct {
 // Analyze compares an original image with a stego image.
 // It returns metrics and generates a difference "heatmap" image.
 func Analyze(args *AnalyzeArgs) (*AnalysisResult, error) {
-	fmt.Fprintln(os.Stderr, " 📂 Loading images...")
+	log.Info().Msg("📂 Loading images...")
 	img1Raw, err := loadImage(*args.OriginalPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load original: %v", err)
@@ -109,7 +110,7 @@ func Analyze(args *AnalyzeArgs) (*AnalysisResult, error) {
 	defer f.Close()
 	png.Encode(f, heatmap)
 
-	fmt.Fprintln(os.Stderr, " ✨ Done!")
+	log.Info().Msg("✨ Done!")
 
 	return &AnalysisResult{MSE: mse, PSNR: psnr}, nil
 }

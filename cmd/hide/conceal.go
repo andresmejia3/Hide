@@ -1,11 +1,12 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+
 	"github.com/andresmejia3/hide/pkg/stego"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
-	"os"
-	"path/filepath"
 )
 
 var (
@@ -20,6 +21,7 @@ var (
 	cChan     int
 	cStrategy string
 	cWorkers  int
+	cDryRun   bool
 )
 
 var concealCmd = &cobra.Command{
@@ -69,6 +71,7 @@ var concealCmd = &cobra.Command{
 			Verbose:           &verbose,
 			Strategy:          &cStrategy,
 			NumWorkers:        &cWorkers,
+			DryRun:            &cDryRun,
 		}
 
 		if err := stego.Conceal(cArgs); err != nil {
@@ -92,4 +95,5 @@ func init() {
 	concealCmd.Flags().IntVarP(&cChan, "channels", "c", 3, "Number of RGBA channels to use (1-4)")
 	concealCmd.Flags().StringVarP(&cStrategy, "strategy", "s", "dct", "Steganography strategy: lsb, lsb-matching, dct")
 	concealCmd.Flags().IntVarP(&cWorkers, "workers", "w", 0, "Number of workers to use for concurrency (default: number of CPUs)")
+	concealCmd.Flags().BoolVar(&cDryRun, "dry-run", false, "Check if the message fits without encoding")
 }

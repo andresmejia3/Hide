@@ -38,6 +38,7 @@ type ConcealArgs struct {
 	Verbose           *bool
 	Strategy          *string
 	NumWorkers        *int
+	DryRun            *bool
 }
 
 type RevealArgs struct {
@@ -72,7 +73,7 @@ type AnalyzeArgs struct {
 }
 
 func Conceal(args *ConcealArgs) error {
-	fmt.Fprintln(os.Stderr, " 📂 Loading image...")
+	log.Info().Msg("📂 Loading image...")
 	img, err := loadImage(*args.ImagePath)
 
 	if err != nil {
@@ -140,7 +141,7 @@ func Conceal(args *ConcealArgs) error {
 	pixels := outputImage.Pix
 
 	totalBitsAvailable := numBitsAvailable(width, height, numChannels, numBitsPerChannel)
-	
+
 	// Estimate required capacity
 	// Header (35 pixels * channels * bits) is skipped by stepper logic, but let's approximate.
 	// We need:
@@ -149,10 +150,19 @@ func Conceal(args *ConcealArgs) error {
 	// Message Body (inputSize * 8)
 	// Reed-Solomon Overhead (approx 1.5x for 4 data / 2 parity)
 	// Encryption overhead (IV/Salt/Key)
-	
+
 	estimatedBitsNeeded := int(inputSize * 8 * 3 / 2) // Rough 1.5x estimate for RS + overhead
 	if estimatedBitsNeeded > totalBitsAvailable {
 		log.Warn().Int("available", totalBitsAvailable).Int("needed_approx", estimatedBitsNeeded).Msg("Image might be too small for this message")
+	}
+
+	if args.DryRun != nil && *args.DryRun {
+		log.Info().Int("available_bits", totalBitsAvailable).Int("estimated_needed_bits", estimatedBitsNeeded).Msg("Dry run capacity check")
+		if estimatedBitsNeeded > totalBitsAvailable {
+			return fmt.Errorf("image is too small: needed ~%d bits, available %d bits", estimatedBitsNeeded, totalBitsAvailable)
+		}
+		log.Info().Msg("✅ Image has sufficient capacity for this message")
+		return nil
 	}
 
 	if *args.Verbose {
@@ -388,7 +398,7 @@ func Conceal(args *ConcealArgs) error {
 		log.Debug().Msg("Encoded the number of bits that will be written")
 	}
 
-	fmt.Fprintln(os.Stderr, " 💾 Saving output image...")
+	log.Info().Msg("💾 Saving output image...")
 
 	file, err := os.Create(output)
 	if err != nil {
@@ -404,7 +414,7 @@ func Conceal(args *ConcealArgs) error {
 		log.Info().Str("output", output).Msg("Encoded message into the image")
 	}
 
-	fmt.Fprintln(os.Stderr, " ✨ Done!")
+	log.Info().Msg("✨ Done!")
 
 	return file.Close()
 }
@@ -527,7 +537,7 @@ func writeBytesToImage(img *image.NRGBA, stepper *ImageStepper, data []byte, str
 }
 
 func Reveal(args *RevealArgs) ([]byte, error) {
-	fmt.Fprintln(os.Stderr, " 📂 Loading image...")
+	log.Info().Msg("📂 Loading image...")
 	imgRaw, err := loadImage(*args.ImagePath)
 	if err != nil {
 		return nil, err
@@ -782,12 +792,12 @@ func Reveal(args *RevealArgs) ([]byte, error) {
 	if args.Writer == nil {
 		return outBuf.Bytes(), nil
 	}
-	fmt.Fprintln(os.Stderr, " ✨ Done!")
+	log.Info().Msg("✨ Done!")
 	return nil, nil
 }
 
 func Verify(args *VerifyArgs) (*VerifyResult, error) {
-	fmt.Fprintln(os.Stderr, " 📂 Loading image...")
+	log.Info().Msg("📂 Loading image...")
 	imgRaw, err := loadImage(*args.ImagePath)
 	if err != nil {
 		return nil, err
@@ -946,7 +956,7 @@ func Verify(args *VerifyArgs) (*VerifyResult, error) {
 		}
 	}
 
-	fmt.Fprintln(os.Stderr, " ✨ Done!")
+	log.Info().Msg("✨ Done!")
 	return &VerifyResult{
 		Strategy:       strategy,
 		MessageBits:    numMessageBits,
@@ -1147,7 +1157,8 @@ func embedDCTBlock(img *image.NRGBA, blockX, blockY int, bit int) error {
 	}
 
 	variance := calculateBlockVariance(block)
-	dctBlock := dct2d(block)
+	var dctBlock [8][8]float64
+	dct2d(&block, &dctBlock)
 
 	// Use an adaptive scale and a lower frequency coefficient for better robustness/imperceptibility
 	dctScale := getAdaptiveScale(variance)
@@ -1177,7 +1188,7 @@ func embedDCTBlock(img *image.NRGBA, blockX, blockY int, bit int) error {
 		for _, tryQ := range candidates {
 			q = tryQ
 			dctBlock[1][2] = float64(q) * dctScale
-			idctBlock = idct2d(dctBlock)
+			idct2d(&dctBlock, &idctBlock)
 
 			for bx := 0; bx < 8; bx++ {
 				for by := 0; by < 8; by++ {
@@ -1214,7 +1225,8 @@ func decodeDCTBlock(img *image.NRGBA, blockX, blockY int) int {
 	}
 
 	variance := calculateBlockVariance(block)
-	dctBlock := dct2d(block)
+	var dctBlock [8][8]float64
+	dct2d(&block, &dctBlock)
 	dctScale := getAdaptiveScale(variance)
 	q := int(math.Round(dctBlock[1][2] / dctScale))
 

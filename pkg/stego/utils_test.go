@@ -47,8 +47,10 @@ func TestDCTRoundTrip(t *testing.T) {
 		}
 	}
 
-	dct := dct2d(block)
-	idct := idct2d(dct)
+	var dct [8][8]float64
+	dct2d(&block, &dct)
+	var idct [8][8]float64
+	idct2d(&dct, &idct)
 
 	for i := 0; i < 8; i++ {
 		for j := 0; j < 8; j++ {
