@@ -17,6 +17,7 @@ var (
 	cEncoding string
 	cChan     int
 	cStrategy string
+	cWorkers  int
 )
 
 var concealCmd = &cobra.Command{
@@ -35,6 +36,9 @@ var concealCmd = &cobra.Command{
 		if cChan < 1 || cChan > 4 {
 			log.Fatal().Msg("channels argument can only be 1, 2, 3, or 4")
 		}
+		if cWorkers < 0 {
+			log.Fatal().Msg("number of workers cannot be negative")
+		}
 
 		cArgs := &stego.ConcealArgs{
 			ImagePath:         &cImage,
@@ -48,6 +52,7 @@ var concealCmd = &cobra.Command{
 			NumChannels:       &cChan,
 			Verbose:           &verbose,
 			Strategy:          &cStrategy,
+			NumWorkers:        &cWorkers,
 		}
 
 		if err := stego.Conceal(cArgs); err != nil {
@@ -70,4 +75,5 @@ func init() {
 	concealCmd.Flags().StringVarP(&cEncoding, "encoding", "e", "utf8", "Encoding to be used for the message")
 	concealCmd.Flags().IntVarP(&cChan, "channels", "c", 3, "Number of RGBA channels to use (1-4)")
 	concealCmd.Flags().StringVarP(&cStrategy, "strategy", "s", "dct", "Steganography strategy: lsb, lsb-matching, dct")
+	concealCmd.Flags().IntVarP(&cWorkers, "workers", "w", 0, "Number of workers to use for concurrency (default: number of CPUs)")
 }

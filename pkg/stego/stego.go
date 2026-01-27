@@ -3,6 +3,7 @@ package stego
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
@@ -12,6 +13,8 @@ import (
 	"io"
 	"math"
 	"os"
+	"runtime"
+	"sync"
 
 	"github.com/klauspost/reedsolomon"
 	"github.com/rs/zerolog/log"
@@ -33,6 +36,7 @@ type ConcealArgs struct {
 	NumChannels       *int
 	Verbose           *bool
 	Strategy          *string
+	NumWorkers        *int
 }
 
 type RevealArgs struct {
@@ -43,6 +47,7 @@ type RevealArgs struct {
 	Verbose        *bool
 	Strategy       *string
 	Writer         io.Writer
+	NumWorkers     *int
 }
 
 func Conceal(args *ConcealArgs) error {
@@ -61,15 +66,22 @@ func Conceal(args *ConcealArgs) error {
 	height := img.Bounds().Max.Y
 
 	var reader io.Reader
+	var inputSize int64 = -1
+
 	if args.File != nil && *args.File != "" {
 		f, err := os.Open(*args.File)
 		if err != nil {
 			return fmt.Errorf("failed to open input file: %v", err)
 		}
 		defer f.Close()
+		if info, err := f.Stat(); err == nil {
+			inputSize = info.Size()
+		}
 		reader = f
 	} else {
-		reader = bytes.NewReader([]byte(*args.Message))
+		inputBytes := []byte(*args.Message)
+		reader = bytes.NewReader(inputBytes)
+		inputSize = int64(len(inputBytes))
 	}
 
 	var seed int64
@@ -157,9 +169,14 @@ func Conceal(args *ConcealArgs) error {
 		}
 	}
 
+	numWorkers := runtime.NumCPU()
+	if args.NumWorkers != nil && *args.NumWorkers > 0 {
+		numWorkers = *args.NumWorkers
+	}
+
 	totalBitsWritten := 0
 	buffer := make([]byte, ChunkSize)
-	bar := progressbar.Default(-1, "encoding")
+	bar := progressbar.Default(inputSize, "encoding")
 
 	for {
 		n, err := reader.Read(buffer)
@@ -188,7 +205,7 @@ func Conceal(args *ConcealArgs) error {
 			chunkLenBytes := make([]byte, 4)
 			binary.BigEndian.PutUint32(chunkLenBytes, chunkLen)
 
-			if err := writeBytesToImage(outputImage, bodyStepper, chunkLenBytes, *args.Strategy, width, height); err != nil {
+			if err := writeBytesToImage(outputImage, bodyStepper, chunkLenBytes, *args.Strategy, width, height, numWorkers); err != nil {
 				if errors.Is(err, ErrIteratorExhausted) {
 					return fmt.Errorf("image is too small to hold the data")
 				}
@@ -196,7 +213,7 @@ func Conceal(args *ConcealArgs) error {
 			}
 			totalBitsWritten += 32
 
-			if err := writeBytesToImage(outputImage, bodyStepper, chunk, *args.Strategy, width, height); err != nil {
+			if err := writeBytesToImage(outputImage, bodyStepper, chunk, *args.Strategy, width, height, numWorkers); err != nil {
 				if errors.Is(err, ErrIteratorExhausted) {
 					return fmt.Errorf("image is too small to hold the data")
 				}
@@ -339,24 +356,86 @@ func Conceal(args *ConcealArgs) error {
 }
 
 // writeBytesToImage writes a byte slice to the image using the stepper and strategy.
-func writeBytesToImage(img *image.NRGBA, stepper *ImageStepper, data []byte, strategy string, width, height int) error {
+func writeBytesToImage(img *image.NRGBA, stepper *ImageStepper, data []byte, strategy string, width, height int, numWorkers int) error {
+	// DCT strategy is CPU intensive (floating point math per bit).
+	// We use a worker pool to parallelize the embedding of blocks.
 	if strategy == "dct" {
+		type dctJob struct {
+			x, y, bit int
+		}
+
+		// Use a context to signal cancellation to all workers and the producer.
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel() // Ensure cancellation is called on function exit.
+
+		jobs := make(chan dctJob, 1000) // Buffer to keep workers fed
+		errChan := make(chan error, 1)  // Buffered channel to hold the first error.
+		var wg sync.WaitGroup
+
+		// Start workers
+		for w := 0; w < numWorkers; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for job := range jobs {
+					// Before starting work, check if cancellation has been requested.
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+
+					if err := embedDCTBlock(img, job.x, job.y, job.bit); err != nil {
+						// On error, try to send it. If successful, we were the first.
+						// Cancel all other goroutines.
+						select {
+						case errChan <- err:
+							cancel()
+						default:
+						}
+						return // Stop this worker.
+					}
+				}
+			}()
+		}
+
+		// Feed jobs to workers, but exit early if context is cancelled.
+	producerLoop:
 		for _, b := range data {
 			for i := 0; i < 8; i++ {
-				// Use stepper coordinates as block coordinates
+				// Calculate coordinates sequentially using the stepper
 				blockX, blockY := stepper.x, stepper.y
-
 				bit := getBitUint8(b, i)
-				if err := embedDCTBlock(img, blockX, blockY, bit); err != nil {
-					return err
+				job := dctJob{blockX, blockY, bit}
+
+				// Send to worker
+				select {
+				case jobs <- job:
+				case <-ctx.Done():
+					break producerLoop
 				}
 
 				if err := stepper.step(); err != nil {
-					return err
+					// Stepper failed (e.g., out of space). Report error and cancel.
+					select {
+					case errChan <- err:
+					default:
+					}
+					cancel()
+					break producerLoop
 				}
 			}
 		}
-		return nil
+		close(jobs) // Signal workers that no more jobs are coming.
+		wg.Wait()   // Wait for all workers to finish.
+
+		// Return the first error that occurred, if any.
+		select {
+		case err := <-errChan:
+			return err
+		default:
+			return nil
+		}
 	}
 
 	matching := strategy == "lsb-matching"
@@ -562,6 +641,7 @@ func Reveal(args *RevealArgs) ([]byte, error) {
 		progressbar.OptionSetDescription("decoding"),
 		progressbar.OptionSetWriter(os.Stderr),
 	)
+	bar.RenderBlank()
 
 	bitsReadTotal := 0
 
@@ -583,25 +663,32 @@ func Reveal(args *RevealArgs) ([]byte, error) {
 		}
 	}
 
+	numWorkers := runtime.NumCPU()
+	if args.NumWorkers != nil && *args.NumWorkers > 0 {
+		numWorkers = *args.NumWorkers
+	}
+
 	for bitsReadTotal < numMessageBits {
-		chunkLenBytes, err := readBytesFromImage(img, bodyStepper, 4, *args.Strategy, width, height)
+		chunkLenBytes, err := readBytesFromImage(img, bodyStepper, 4, *args.Strategy, width, height, numWorkers, func(n int) {
+			bar.Add(n)
+		})
 		if err != nil {
 			return nil, err
 		}
 		bitsReadTotal += 32
-		bar.Add(32)
 
 		chunkLen := binary.BigEndian.Uint32(chunkLenBytes)
 		if chunkLen > MaxChunkSize {
 			return nil, fmt.Errorf("chunk length %d exceeds maximum allowed size", chunkLen)
 		}
 
-		chunkData, err := readBytesFromImage(img, bodyStepper, int(chunkLen), *args.Strategy, width, height)
+		chunkData, err := readBytesFromImage(img, bodyStepper, int(chunkLen), *args.Strategy, width, height, numWorkers, func(n int) {
+			bar.Add(n)
+		})
 		if err != nil {
 			return nil, err
 		}
 		bitsReadTotal += int(chunkLen) * 8
-		bar.Add(int(chunkLen) * 8)
 
 		recovered, err := removeReedSolomon(chunkData)
 		if err != nil {
@@ -634,30 +721,114 @@ func Reveal(args *RevealArgs) ([]byte, error) {
 	return nil, nil
 }
 
-func readBytesFromImage(img *image.NRGBA, stepper *ImageStepper, numBytes int, strategy string, width, height int) ([]byte, error) {
+func readBytesFromImage(img *image.NRGBA, stepper *ImageStepper, numBytes int, strategy string, width, height int, numWorkers int, onProgress func(int)) ([]byte, error) {
 	out := make([]byte, numBytes)
 
 	if strategy == "dct" {
+		type readJob struct {
+			byteIdx int
+			bitIdx  int
+			x, y    int
+		}
+		type readResult struct {
+			byteIdx int
+			bitIdx  int
+			bit     int
+		}
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		jobs := make(chan readJob, 1000)
+		results := make(chan readResult, 1000)
+		errChan := make(chan error, 1)
+		var wg sync.WaitGroup
+
+		// Start workers
+		for w := 0; w < numWorkers; w++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for job := range jobs {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+
+					bit := decodeDCTBlock(img, job.x, job.y)
+
+					select {
+					case results <- readResult{job.byteIdx, job.bitIdx, bit}:
+					case <-ctx.Done():
+						return
+					}
+				}
+			}()
+		}
+
+		// Start collector to aggregate results into the output slice
+		collectorDone := make(chan struct{})
+		go func() {
+			defer close(collectorDone)
+			pendingProgress := 0
+			for res := range results {
+				if res.bit != 0 {
+					out[res.byteIdx] = setBitUint8(out[res.byteIdx], res.bitIdx)
+				}
+				// No need to clear bit since out is initialized to 0s
+				pendingProgress++
+				if pendingProgress >= 1000 {
+					if onProgress != nil {
+						onProgress(pendingProgress)
+					}
+					pendingProgress = 0
+				}
+			}
+			if pendingProgress > 0 && onProgress != nil {
+				onProgress(pendingProgress)
+			}
+		}()
+
+		// Producer loop
+	producerLoop:
 		for i := 0; i < numBytes; i++ {
 			for bitIdx := 0; bitIdx < 8; bitIdx++ {
 				blockX, blockY := stepper.x, stepper.y
 
-				if decodeDCTBlock(img, blockX, blockY) != 0 {
-					out[i] = setBitUint8(out[i], bitIdx)
-				} else {
-					out[i] = clearBitUint8(out[i], bitIdx)
+				select {
+				case jobs <- readJob{i, bitIdx, blockX, blockY}:
+				case <-ctx.Done():
+					break producerLoop
 				}
+
 				if err := stepper.step(); err != nil {
-					return nil, err
+					select {
+					case errChan <- err:
+					default:
+					}
+					cancel()
+					break producerLoop
 				}
 			}
 		}
-		return out, nil
+		close(jobs)
+		wg.Wait()      // Wait for workers
+		close(results) // Signal collector to finish
+		<-collectorDone
+
+		select {
+		case err := <-errChan:
+			return nil, err
+		default:
+			return out, nil
+		}
 	}
 
 	numBitsRead := 0
 	byteIndex := 0
 	totalBits := numBytes * 8
+	pendingProgress := 0
 
 	for j := 0; j < totalBits; j++ {
 		channels := colorToChannels(img.At(stepper.x, stepper.y))
@@ -677,6 +848,16 @@ func readBytesFromImage(img *image.NRGBA, stepper *ImageStepper, numBytes int, s
 		if err := stepper.step(); err != nil {
 			return nil, err
 		}
+		pendingProgress++
+		if pendingProgress >= 1000 {
+			if onProgress != nil {
+				onProgress(pendingProgress)
+			}
+			pendingProgress = 0
+		}
+	}
+	if pendingProgress > 0 && onProgress != nil {
+		onProgress(pendingProgress)
 	}
 	return out, nil
 }

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"image"
 	"image/color"
+	"image/draw"
 	_ "image/gif"
 	_ "image/jpeg"
 	"math"
@@ -37,15 +38,7 @@ func loadImage(path string) (image.Image, error) {
 
 func copyImage(img image.Image) *image.NRGBA {
 	outputImage := image.NewNRGBA(img.Bounds())
-	width := img.Bounds().Max.X
-	height := img.Bounds().Max.Y
-
-	for x := 0; x < width; x++ {
-		for y := 0; y < height; y++ {
-			pixel := img.At(x, y)
-			outputImage.Set(x, y, pixel)
-		}
-	}
+	draw.Draw(outputImage, outputImage.Bounds(), img, img.Bounds().Min, draw.Src)
 	return outputImage
 }
 
