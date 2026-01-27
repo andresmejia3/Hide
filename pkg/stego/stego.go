@@ -189,11 +189,17 @@ func Conceal(args *ConcealArgs) error {
 			binary.BigEndian.PutUint32(chunkLenBytes, chunkLen)
 
 			if err := writeBytesToImage(outputImage, bodyStepper, chunkLenBytes, *args.Strategy, width, height); err != nil {
+				if errors.Is(err, ErrIteratorExhausted) {
+					return fmt.Errorf("image is too small to hold the data")
+				}
 				return err
 			}
 			totalBitsWritten += 32
 
 			if err := writeBytesToImage(outputImage, bodyStepper, chunk, *args.Strategy, width, height); err != nil {
+				if errors.Is(err, ErrIteratorExhausted) {
+					return fmt.Errorf("image is too small to hold the data")
+				}
 				return err
 			}
 			totalBitsWritten += len(chunk) * 8
@@ -341,7 +347,9 @@ func writeBytesToImage(img *image.NRGBA, stepper *ImageStepper, data []byte, str
 				blockX, blockY := stepper.x, stepper.y
 
 				bit := getBitUint8(b, i)
-				embedDCTBlock(img, blockX, blockY, bit)
+				if err := embedDCTBlock(img, blockX, blockY, bit); err != nil {
+					return err
+				}
 
 				if err := stepper.step(); err != nil {
 					return err
@@ -673,24 +681,62 @@ func readBytesFromImage(img *image.NRGBA, stepper *ImageStepper, numBytes int, s
 	return out, nil
 }
 
-func embedDCTBlock(img *image.NRGBA, blockX, blockY int, bit int) {
+func calculateBlockVariance(block [8][8]float64) float64 {
+	var sum float64
+	for i := 0; i < 8; i++ {
+		for j := 0; j < 8; j++ {
+			sum += block[i][j]
+		}
+	}
+	mean := sum / 64.0
+
+	var variance float64
+	for i := 0; i < 8; i++ {
+		for j := 0; j < 8; j++ {
+			variance += (block[i][j] - mean) * (block[i][j] - mean)
+		}
+	}
+	return variance / 64.0
+}
+
+func getAdaptiveScale(variance float64) float64 {
+	const minScale = 20.0
+	const maxScale = 80.0
+	const minVariance = 5.0
+	const maxVariance = 250.0
+
+	if variance < minVariance {
+		return minScale
+	}
+	if variance > maxVariance {
+		return maxScale
+	}
+
+	// Linear interpolation
+	scale := minScale + (variance-minVariance)*(maxScale-minScale)/(maxVariance-minVariance)
+	return scale
+}
+
+func embedDCTBlock(img *image.NRGBA, blockX, blockY int, bit int) error {
 	// Extract Blue channel 8x8 block
+	originalPixels := make([]uint8, 64)
 	var block [8][8]float64
 	baseX, baseY := blockX*8, blockY*8
 	for bx := 0; bx < 8; bx++ {
 		for by := 0; by < 8; by++ {
 			pix := getPixel(img, baseX+bx, baseY+by)
-			block[bx][by] = float64(pix[2]) // Blue channel
-			block[bx][by] = float64(pix[2])
+			val := pix[2]
+			block[bx][by] = float64(val) // Blue channel
+			originalPixels[by*8+bx] = val
 		}
 	}
 
+	variance := calculateBlockVariance(block)
 	dctBlock := dct2d(block)
 
-	// Embed bit in (4,4) coefficient
-	// Use a scaling factor to make the embedding robust against float->uint8 conversion noise
-	const dctScale = 10.0
-	val := dctBlock[4][4]
+	// Use an adaptive scale and a lower frequency coefficient for better robustness/imperceptibility
+	dctScale := getAdaptiveScale(variance)
+	val := dctBlock[1][2]
 	q := int(math.Round(val / dctScale))
 
 	// Ensure q % 2 matches the bit
@@ -701,16 +747,44 @@ func embedDCTBlock(img *image.NRGBA, blockX, blockY int, bit int) {
 			q++
 		}
 	}
-	dctBlock[4][4] = float64(q) * dctScale
 
-	idctBlock := idct2d(dctBlock)
+	// Iteratively attempt to embed the bit, adjusting q if quantization noise flips it back
+	originalQ := q
+	var idctBlock [8][8]float64
+	// Try progressively larger shifts to force the bit to stick
+	// We iterate dynamically to cover a wider range if necessary (up to +/- 50)
+	for i := 0; i <= 25; i++ {
+		candidates := []int{originalQ + (i * 2)}
+		if i > 0 {
+			candidates = append(candidates, originalQ-(i*2))
+		}
 
-	for bx := 0; bx < 8; bx++ {
-		for by := 0; by < 8; by++ {
-			pix := getPixel(img, baseX+bx, baseY+by)
-			pix[2] = uint8(math.Max(0, math.Min(255, idctBlock[bx][by])))
+		for _, tryQ := range candidates {
+			q = tryQ
+			dctBlock[1][2] = float64(q) * dctScale
+			idctBlock = idct2d(dctBlock)
+
+			for bx := 0; bx < 8; bx++ {
+				for by := 0; by < 8; by++ {
+					pix := getPixel(img, baseX+bx, baseY+by)
+					pix[2] = uint8(math.Max(0, math.Min(255, idctBlock[bx][by])))
+				}
+			}
+
+			// Verify if the bit persists after round-trip
+			if decodeDCTBlock(img, blockX, blockY) == bit {
+				return nil
+			}
+			// If verification failed, restore original pixels for the next attempt.
+			for bx := 0; bx < 8; bx++ {
+				for by := 0; by < 8; by++ {
+					pix := getPixel(img, baseX+bx, baseY+by)
+					pix[2] = originalPixels[by*8+bx]
+				}
+			}
 		}
 	}
+	return fmt.Errorf("failed to embed bit in DCT block at %d,%d after multiple attempts", blockX, blockY)
 }
 
 func decodeDCTBlock(img *image.NRGBA, blockX, blockY int) int {
@@ -724,9 +798,10 @@ func decodeDCTBlock(img *image.NRGBA, blockX, blockY int) int {
 		}
 	}
 
+	variance := calculateBlockVariance(block)
 	dctBlock := dct2d(block)
-	const dctScale = 10.0
-	q := int(math.Round(dctBlock[4][4] / dctScale))
+	dctScale := getAdaptiveScale(variance)
+	q := int(math.Round(dctBlock[1][2] / dctScale))
 
 	if (q%2+2)%2 != 0 {
 		return 1

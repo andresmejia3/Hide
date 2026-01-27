@@ -5,6 +5,8 @@ import (
 	"math/rand"
 )
 
+var ErrIteratorExhausted = errors.New("iterator exhausted: stepped past the last available pixel")
+
 // pixelIterator defines a strategy for traversing image pixels.
 type pixelIterator interface {
 	next() (x, y int, ok bool)
@@ -162,7 +164,7 @@ func (self *ImageStepper) step() error {
 		self.channel = 0
 		x, y, ok := self.iterator.next()
 		if !ok {
-			return errors.New("iterator exhausted: stepped past the last available pixel")
+			return ErrIteratorExhausted
 		}
 		self.x = x
 		self.y = y
