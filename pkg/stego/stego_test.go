@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"crypto/rand"
 	"image"
+	"image/color"
 	"image/jpeg"
 	_ "image/jpeg"
 	"image/png"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -704,4 +706,89 @@ func TestNonMultipleDimensions(t *testing.T) {
 	// Increased to 203x203 to ensure sufficient capacity for DCT with RS overhead
 	runEndToEndTest(t, "dct", 203, 203, 3, 1, "OddSize")
 	runEndToEndTest(t, "lsb", 203, 203, 3, 1, "OddSize")
+}
+
+func TestVerify(t *testing.T) {
+	tmpDir := t.TempDir()
+	inputPath := filepath.Join(tmpDir, "input_verify.png")
+	outputPath := filepath.Join(tmpDir, "output_verify.png")
+
+	img := image.NewNRGBA(image.Rect(0, 0, 100, 100))
+	if _, err := rand.Read(img.Pix); err != nil {
+		t.Fatalf("Failed to create random image: %v", err)
+	}
+	f, _ := os.Create(inputPath)
+	png.Encode(f, img)
+	f.Close()
+
+	message := "Verify Me"
+	passphrase := "pass"
+	bits := 2
+	channels := 3
+	verbose := false
+	encoding := "utf8"
+	strategy := "lsb"
+
+	if err := Conceal(&ConcealArgs{
+		ImagePath:         &inputPath,
+		Output:            &outputPath,
+		Message:           &message,
+		File:              new(string),
+		Passphrase:        &passphrase,
+		NumBitsPerChannel: &bits,
+		NumChannels:       &channels,
+		Verbose:           &verbose,
+		Encoding:          &encoding,
+		PublicKeyPath:     new(string),
+		Strategy:          &strategy,
+	}); err != nil {
+		t.Fatalf("Conceal failed: %v", err)
+	}
+
+	result, err := Verify(&VerifyArgs{
+		ImagePath:  &outputPath,
+		Passphrase: &passphrase,
+		Verbose:    &verbose,
+	})
+	if err != nil {
+		t.Fatalf("Verify failed: %v", err)
+	}
+
+	if result.Strategy != strategy {
+		t.Errorf("Strategy mismatch: got %s, want %s", result.Strategy, strategy)
+	}
+	if result.NumChannels != channels {
+		t.Errorf("Channels mismatch: got %d, want %d", result.NumChannels, channels)
+	}
+}
+
+func TestAnalysisTools(t *testing.T) {
+	tmpDir := t.TempDir()
+	origPath := filepath.Join(tmpDir, "orig.png")
+	stegoPath := filepath.Join(tmpDir, "stego.png")
+	heatmapPath := filepath.Join(tmpDir, "heatmap.png")
+
+	// Create original
+	img := image.NewNRGBA(image.Rect(0, 0, 50, 50))
+	f, _ := os.Create(origPath)
+	png.Encode(f, img)
+	f.Close()
+
+	// Create "stego" image with one modified pixel
+	img.Set(10, 10, image.NewUniform(color.RGBA{R: 10, G: 0, B: 0, A: 255}))
+	f2, _ := os.Create(stegoPath)
+	png.Encode(f2, img)
+	f2.Close()
+
+	result, err := AnalyzeImages(origPath, stegoPath, heatmapPath)
+	if err != nil {
+		t.Fatalf("AnalyzeImages failed: %v", err)
+	}
+
+	if result.PSNR == 0 || math.IsInf(result.PSNR, 0) {
+		t.Errorf("Invalid PSNR calculated: %f", result.PSNR)
+	}
+	if _, err := os.Stat(heatmapPath); os.IsNotExist(err) {
+		t.Error("Heatmap file was not created")
+	}
 }

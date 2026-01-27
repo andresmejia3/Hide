@@ -51,6 +51,20 @@ type RevealArgs struct {
 	NumWorkers     *int
 }
 
+type VerifyArgs struct {
+	ImagePath  *string
+	Passphrase *string
+	Verbose    *bool
+	NumWorkers *int
+}
+
+type VerifyResult struct {
+	Strategy       string
+	MessageBits    int
+	NumChannels    int
+	BitsPerChannel int
+}
+
 func Conceal(args *ConcealArgs) error {
 	fmt.Fprintln(os.Stderr, " 📂 Loading image...")
 	img, err := loadImage(*args.ImagePath)
@@ -750,6 +764,175 @@ func Reveal(args *RevealArgs) ([]byte, error) {
 	}
 	fmt.Fprintln(os.Stderr, " ✨ Done!")
 	return nil, nil
+}
+
+func Verify(args *VerifyArgs) (*VerifyResult, error) {
+	fmt.Fprintln(os.Stderr, " 📂 Loading image...")
+	imgRaw, err := loadImage(*args.ImagePath)
+	if err != nil {
+		return nil, err
+	}
+	img := copyImage(imgRaw)
+	pixels := img.Pix
+
+	width := img.Bounds().Max.X
+	height := img.Bounds().Max.Y
+
+	if width*height < 35 {
+		return nil, errors.New("image must have at least 35 pixels (header+salt)")
+	}
+
+	// Parse Header
+	var channels []uint8
+	numBitsToUsePerChannel := 0
+	channels = pixels[0:4]
+	for i := 0; i < 4; i++ {
+		if getBitUint8(channels[i], 0) != 0 {
+			numBitsToUsePerChannel = setBit(numBitsToUsePerChannel, i)
+		}
+	}
+
+	numChannels := 0
+	channels = pixels[4:8]
+	for i := 0; i < 4; i++ {
+		if getBitUint8(channels[i], 0) != 0 {
+			numChannels = setBit(numChannels, i)
+		}
+	}
+
+	strategyID := 0
+	channels = pixels[8:12]
+	for i := 0; i < 4; i++ {
+		if getBitUint8(channels[i], 0) != 0 {
+			strategyID = setBit(strategyID, i)
+		}
+	}
+
+	strategy := "lsb"
+	switch strategyID {
+	case 1:
+		strategy = "lsb-matching"
+	case 2:
+		strategy = "dct"
+	}
+
+	if numChannels < 1 || numChannels > 4 {
+		return nil, fmt.Errorf("invalid header: detected %d channels (must be 1-4)", numChannels)
+	}
+	if numBitsToUsePerChannel < 1 || numBitsToUsePerChannel > 8 {
+		return nil, fmt.Errorf("invalid header: detected %d bits per channel (must be 1-8)", numBitsToUsePerChannel)
+	}
+
+	if *args.Verbose {
+		log.Debug().Str("strategy", strategy).Int("channels", numChannels).Int("bits", numBitsToUsePerChannel).Msg("Header parsed")
+	}
+
+	var seed int64
+	if *args.Passphrase != "" {
+		seed = getSeed(*args.Passphrase)
+	}
+
+	stepperSeed := seed
+	if strategy == "dct" {
+		stepperSeed = 0
+	}
+
+	stepper, err := makeImageStepper(numBitsToUsePerChannel, width, height, numChannels, stepperSeed, "lsb")
+	if err != nil {
+		return nil, err
+	}
+
+	// Skip header (35 pixels)
+	for i := 0; i < 35; i++ {
+		if err := stepper.skipPixel(); err != nil {
+			return nil, err
+		}
+	}
+
+	totalBitsInImage := numBitsAvailable(width, height, 4, 8)
+	numBitsToEncodeNumMessageBits := int(math.Ceil(math.Log2(float64(totalBitsInImage))))
+	numMessageBits := 0
+
+	for i := 0; i < numBitsToEncodeNumMessageBits; i++ {
+		chans := colorToChannels(img.At(stepper.x, stepper.y))
+		val := chans[stepper.channel]
+		if getBitUint8(val, stepper.bitIndexOffset) != 0 {
+			numMessageBits = setBit(numMessageBits, i)
+		}
+		if err := stepper.step(); err != nil {
+			return nil, err
+		}
+	}
+
+	if numMessageBits < 0 || numMessageBits%8 != 0 {
+		return nil, fmt.Errorf("invalid header: message length %d is invalid", numMessageBits)
+	}
+
+	bar := progressbar.NewOptions64(
+		int64(numMessageBits),
+		progressbar.OptionSetDescription(" 🔍 Verifying"),
+		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionSetWidth(15),
+		progressbar.OptionThrottle(65*time.Millisecond),
+		progressbar.OptionShowCount(),
+		progressbar.OptionOnCompletion(func() {
+			fmt.Fprint(os.Stderr, "\n")
+		}),
+		progressbar.OptionSpinnerType(14),
+		progressbar.OptionFullWidth(),
+		progressbar.OptionSetRenderBlankState(true),
+	)
+	bar.RenderBlank()
+
+	bodyStepper := stepper
+	if strategy == "dct" {
+		bodyStepper, err = makeImageStepper(1, width, height, 1, 0, "dct")
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	numWorkers := runtime.NumCPU()
+	if args.NumWorkers != nil && *args.NumWorkers > 0 {
+		numWorkers = *args.NumWorkers
+	}
+
+	bitsReadTotal := 0
+	for bitsReadTotal < numMessageBits {
+		chunkLenBytes, err := readBytesFromImage(img, bodyStepper, 4, strategy, width, height, numWorkers, func(n int) {
+			bar.Add(n)
+		})
+		if err != nil {
+			return nil, err
+		}
+		bitsReadTotal += 32
+
+		chunkLen := binary.BigEndian.Uint32(chunkLenBytes)
+		if chunkLen > MaxChunkSize {
+			return nil, fmt.Errorf("chunk length %d exceeds maximum allowed size", chunkLen)
+		}
+
+		chunkData, err := readBytesFromImage(img, bodyStepper, int(chunkLen), strategy, width, height, numWorkers, func(n int) {
+			bar.Add(n)
+		})
+		if err != nil {
+			return nil, err
+		}
+		bitsReadTotal += int(chunkLen) * 8
+
+		// Verify integrity using Reed-Solomon
+		if _, err := removeReedSolomon(chunkData); err != nil {
+			return nil, fmt.Errorf("integrity check failed: %v", err)
+		}
+	}
+
+	fmt.Fprintln(os.Stderr, " ✨ Done!")
+	return &VerifyResult{
+		Strategy:       strategy,
+		MessageBits:    numMessageBits,
+		NumChannels:    numChannels,
+		BitsPerChannel: numBitsToUsePerChannel,
+	}, nil
 }
 
 func readBytesFromImage(img *image.NRGBA, stepper *ImageStepper, numBytes int, strategy string, width, height int, numWorkers int, onProgress func(int)) ([]byte, error) {
