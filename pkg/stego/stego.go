@@ -15,6 +15,7 @@ import (
 	"os"
 	"runtime"
 	"sync"
+	"time"
 
 	"github.com/klauspost/reedsolomon"
 	"github.com/rs/zerolog/log"
@@ -51,6 +52,7 @@ type RevealArgs struct {
 }
 
 func Conceal(args *ConcealArgs) error {
+	fmt.Fprintln(os.Stderr, " 📂 Loading image...")
 	img, err := loadImage(*args.ImagePath)
 
 	if err != nil {
@@ -176,13 +178,26 @@ func Conceal(args *ConcealArgs) error {
 
 	totalBitsWritten := 0
 	buffer := make([]byte, ChunkSize)
-	bar := progressbar.Default(inputSize, "encoding")
+	bar := progressbar.NewOptions64(
+		inputSize,
+		progressbar.OptionSetDescription(" 🔒 Encoding"),
+		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionShowBytes(true),
+		progressbar.OptionSetWidth(15),
+		progressbar.OptionThrottle(65*time.Millisecond),
+		progressbar.OptionShowCount(),
+		progressbar.OptionOnCompletion(func() {
+			fmt.Fprint(os.Stderr, "\n")
+		}),
+		progressbar.OptionSpinnerType(14),
+		progressbar.OptionFullWidth(),
+		progressbar.OptionSetRenderBlankState(true),
+	)
 
 	for {
 		n, err := reader.Read(buffer)
 		if n > 0 {
 			chunk := buffer[:n]
-			bar.Add(n)
 
 			if *args.Passphrase != "" {
 				chunk, err = encrypt(chunk, *args.Passphrase, salt)
@@ -220,6 +235,7 @@ func Conceal(args *ConcealArgs) error {
 				return err
 			}
 			totalBitsWritten += len(chunk) * 8
+			bar.Add(n)
 		}
 		if err == io.EOF {
 			break
@@ -338,6 +354,8 @@ func Conceal(args *ConcealArgs) error {
 		log.Debug().Msg("Encoded the number of bits that will be written")
 	}
 
+	fmt.Fprintln(os.Stderr, " 💾 Saving output image...")
+
 	file, err := os.Create(output)
 	if err != nil {
 		return err
@@ -351,6 +369,8 @@ func Conceal(args *ConcealArgs) error {
 	if *args.Verbose {
 		log.Info().Str("output", output).Msg("Encoded message into the image")
 	}
+
+	fmt.Fprintln(os.Stderr, " ✨ Done!")
 
 	return file.Close()
 }
@@ -473,6 +493,7 @@ func writeBytesToImage(img *image.NRGBA, stepper *ImageStepper, data []byte, str
 }
 
 func Reveal(args *RevealArgs) ([]byte, error) {
+	fmt.Fprintln(os.Stderr, " 📂 Loading image...")
 	imgRaw, err := loadImage(*args.ImagePath)
 	if err != nil {
 		return nil, err
@@ -638,8 +659,17 @@ func Reveal(args *RevealArgs) ([]byte, error) {
 
 	bar := progressbar.NewOptions64(
 		int64(numMessageBits),
-		progressbar.OptionSetDescription("decoding"),
+		progressbar.OptionSetDescription(" 🔓 Decoding"),
 		progressbar.OptionSetWriter(os.Stderr),
+		progressbar.OptionSetWidth(15),
+		progressbar.OptionThrottle(65*time.Millisecond),
+		progressbar.OptionShowCount(),
+		progressbar.OptionOnCompletion(func() {
+			fmt.Fprint(os.Stderr, "\n")
+		}),
+		progressbar.OptionSpinnerType(14),
+		progressbar.OptionFullWidth(),
+		progressbar.OptionSetRenderBlankState(true),
 	)
 	bar.RenderBlank()
 
@@ -718,6 +748,7 @@ func Reveal(args *RevealArgs) ([]byte, error) {
 	if args.Writer == nil {
 		return outBuf.Bytes(), nil
 	}
+	fmt.Fprintln(os.Stderr, " ✨ Done!")
 	return nil, nil
 }
 
