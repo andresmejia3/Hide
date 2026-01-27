@@ -57,7 +57,8 @@ func newRandomIterator(width, height int, seed int64) *randomIterator {
 			indices[i+35], indices[j+35] = indices[j+35], indices[i+35]
 		})
 	}
-	return &randomIterator{indices: indices, width: width}
+	// Start at index 35 to skip the header (3 metadata + 32 salt pixels)
+	return &randomIterator{indices: indices, width: width, current: 35}
 }
 
 func (it *randomIterator) next() (int, int, bool) {
