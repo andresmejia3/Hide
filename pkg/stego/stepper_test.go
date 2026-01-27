@@ -67,7 +67,7 @@ func TestImageStepperOverflow(t *testing.T) {
 
 func TestRandomIteratorCoverage(t *testing.T) {
 	// 10x10 image = 100 pixels.
-	// Random iterator skips first 35.
+	// Random iterator skips first HeaderPixels.
 	// Should yield 65 unique coordinates.
 	width, height := 10, 10
 	seed := int64(12345)
@@ -89,7 +89,7 @@ func TestRandomIteratorCoverage(t *testing.T) {
 		count++
 	}
 
-	expected := (width * height) - 35
+	expected := (width * height) - HeaderPixels
 	if count != expected {
 		t.Errorf("Random iterator visited %d pixels, want %d", count, expected)
 	}

@@ -171,8 +171,8 @@ func Conceal(args *ConcealArgs) error {
 		log.Debug().Int("available", totalBitsAvailable).Msg("Total bits available for use")
 	}
 
-	if width*height < 35 {
-		return errors.New("image must have at least 35 pixels (header+salt)")
+	if width*height < HeaderPixels {
+		return fmt.Errorf("image must have at least %d pixels (header+salt)", HeaderPixels)
 	}
 
 	if *args.Strategy == "dct" && width < 8 {
@@ -180,7 +180,7 @@ func Conceal(args *ConcealArgs) error {
 	}
 
 	if *args.Strategy == "dct" {
-		headerPixels := 35 + numBitsToEncodeNumMessageBits
+		headerPixels := HeaderPixels + numBitsToEncodeNumMessageBits
 		safeZonePixels := width * 8
 		if headerPixels > safeZonePixels {
 			return fmt.Errorf("image too narrow for DCT header: header needs %d pixels, but only %d available in safe zone", headerPixels, safeZonePixels)
@@ -195,7 +195,7 @@ func Conceal(args *ConcealArgs) error {
 	// Header (3 pixels) + Salt (32 pixels) = 35 pixels.
 	// Length field = numBitsToEncodeNumMessageBits.
 
-	for i := 0; i < 35; i++ {
+	for i := 0; i < HeaderPixels; i++ {
 		if err := stepper.skipPixel(); err != nil {
 			return fmt.Errorf("failed to skip header pixels: %v", err)
 		}
@@ -551,8 +551,8 @@ func Reveal(args *RevealArgs) ([]byte, error) {
 	height := img.Bounds().Max.Y
 	numBitsToUsePerChannel := 0
 
-	if width*height < 35 {
-		return nil, errors.New("image must have at least 35 pixels (header+salt)")
+	if width*height < HeaderPixels {
+		return nil, fmt.Errorf("image must have at least %d pixels (header+salt)", HeaderPixels)
 	}
 	numChannels := 0
 	numMessageBits := 0
@@ -685,7 +685,7 @@ func Reveal(args *RevealArgs) ([]byte, error) {
 	} else {
 		// LSB capacity (approximate check, stepper handles exact bounds)
 		capacity = numBitsAvailable(width, height, numChannels, numBitsToUsePerChannel)
-		capacity -= 35 * numChannels * numBitsToUsePerChannel
+		capacity -= HeaderPixels * numChannels * numBitsToUsePerChannel
 		// Account for the bits used to store the message length
 		capacity -= int(math.Ceil(math.Log2(float64(numBitsAvailable(width, height, 4, 8)))))
 	}
@@ -808,8 +808,8 @@ func Verify(args *VerifyArgs) (*VerifyResult, error) {
 	width := img.Bounds().Max.X
 	height := img.Bounds().Max.Y
 
-	if width*height < 35 {
-		return nil, errors.New("image must have at least 35 pixels (header+salt)")
+	if width*height < HeaderPixels {
+		return nil, fmt.Errorf("image must have at least %d pixels (header+salt)", HeaderPixels)
 	}
 
 	// Parse Header
@@ -872,8 +872,8 @@ func Verify(args *VerifyArgs) (*VerifyResult, error) {
 		return nil, err
 	}
 
-	// Skip header (35 pixels)
-	for i := 0; i < 35; i++ {
+	// Skip header (HeaderPixels)
+	for i := 0; i < HeaderPixels; i++ {
 		if err := stepper.skipPixel(); err != nil {
 			return nil, err
 		}

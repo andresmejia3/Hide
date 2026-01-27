@@ -7,6 +7,8 @@ import (
 
 var ErrIteratorExhausted = errors.New("iterator exhausted: stepped past the last available pixel")
 
+const HeaderPixels = 35
+
 // pixelIterator defines a strategy for traversing image pixels.
 type pixelIterator interface {
 	next() (x, y int, ok bool)
@@ -36,7 +38,7 @@ func (it *linearIterator) next() (int, int, bool) {
 }
 
 // randomIterator traverses pixels in a pseudo-random order determined by a seed.
-// It skips the first 35 pixels (3 metadata + 32 salt).
+// It skips the first HeaderPixels (3 metadata + 32 salt).
 type randomIterator struct {
 	indices []int
 	current int
@@ -50,15 +52,15 @@ func newRandomIterator(width, height int, seed int64) *randomIterator {
 		indices[i] = i
 	}
 
-	// Shuffle indices starting from 35 to preserve metadata/salt pixels
-	if count > 35 {
+	// Shuffle indices starting from HeaderPixels to preserve metadata/salt pixels
+	if count > HeaderPixels {
 		r := rand.New(rand.NewSource(seed))
-		r.Shuffle(count-35, func(i, j int) {
-			indices[i+35], indices[j+35] = indices[j+35], indices[i+35]
+		r.Shuffle(count-HeaderPixels, func(i, j int) {
+			indices[i+HeaderPixels], indices[j+HeaderPixels] = indices[j+HeaderPixels], indices[i+HeaderPixels]
 		})
 	}
-	// Start at index 35 to skip the header (3 metadata + 32 salt pixels)
-	return &randomIterator{indices: indices, width: width, current: 35}
+	// Start at index HeaderPixels to skip the header (3 metadata + 32 salt pixels)
+	return &randomIterator{indices: indices, width: width, current: HeaderPixels}
 }
 
 func (it *randomIterator) next() (int, int, bool) {
