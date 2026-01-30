@@ -92,7 +92,7 @@ func init() {
 	concealCmd.Flags().StringVarP(&concealFlags.Pass, "passphrase", "p", "", "Passphrase to encrypt the message")
 	concealCmd.Flags().StringVarP(&concealFlags.Key, "key-path", "k", "", "Path to .pem file containing recipient's public key")
 	concealCmd.Flags().StringVarP(&concealFlags.Msg, "message", "m", "", "Message you want to conceal (required)")
-	concealCmd.Flags().StringVarP(&concealFlags.File, "file", "f", "", "Path to file to conceal (overrides message)")
+	concealCmd.Flags().StringVarP(&concealFlags.File, "file", "f", "", "Path to file to conceal (overrides message). Use '-' for stdin.")
 	concealCmd.Flags().StringVarP(&concealFlags.Out, "output", "o", "", "Output path for the image")
 	concealCmd.Flags().IntVarP(&concealFlags.Bits, "num-bits", "n", 1, "Number of bits to use per channel value")
 	concealCmd.Flags().StringVarP(&concealFlags.Encoding, "encoding", "e", "utf8", "Encoding to be used for the message")

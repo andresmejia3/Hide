@@ -94,15 +94,20 @@ func Conceal(args *ConcealArgs) error {
 	var inputSize int64 = -1
 
 	if args.File != nil && *args.File != "" {
-		f, err := os.Open(*args.File)
-		if err != nil {
-			return fmt.Errorf("failed to open input file: %v", err)
+		if *args.File == "-" {
+			reader = os.Stdin
+			log.Info().Msg("📖 Reading message from Stdin...")
+		} else {
+			f, err := os.Open(*args.File)
+			if err != nil {
+				return fmt.Errorf("failed to open input file: %v", err)
+			}
+			defer f.Close()
+			if info, err := f.Stat(); err == nil {
+				inputSize = info.Size()
+			}
+			reader = f
 		}
-		defer f.Close()
-		if info, err := f.Stat(); err == nil {
-			inputSize = info.Size()
-		}
-		reader = f
 	} else {
 		inputBytes := []byte(*args.Message)
 		reader = bytes.NewReader(inputBytes)
@@ -153,17 +158,23 @@ func Conceal(args *ConcealArgs) error {
 	// Reed-Solomon Overhead (approx 1.5x for 4 data / 2 parity)
 	// Encryption overhead (IV/Salt/Key)
 
-	estimatedBitsNeeded := int(inputSize * 8 * 3 / 2) // Rough 1.5x estimate for RS + overhead
-	if estimatedBitsNeeded > totalBitsAvailable {
-		log.Warn().Int("available", totalBitsAvailable).Int("needed_approx", estimatedBitsNeeded).Msg("Image might be too small for this message")
-	}
-
-	if args.DryRun != nil && *args.DryRun {
-		log.Info().Int("available_bits", totalBitsAvailable).Int("estimated_needed_bits", estimatedBitsNeeded).Msg("Dry run capacity check")
+	if inputSize > 0 {
+		estimatedBitsNeeded := int(inputSize * 8 * 3 / 2) // Rough 1.5x estimate for RS + overhead
 		if estimatedBitsNeeded > totalBitsAvailable {
-			return fmt.Errorf("image is too small: needed ~%d bits, available %d bits", estimatedBitsNeeded, totalBitsAvailable)
+			log.Warn().Int("available", totalBitsAvailable).Int("needed_approx", estimatedBitsNeeded).Msg("Image might be too small for this message")
 		}
-		log.Info().Msg("✅ Image has sufficient capacity for this message")
+
+		if args.DryRun != nil && *args.DryRun {
+			log.Info().Int("available_bits", totalBitsAvailable).Int("estimated_needed_bits", estimatedBitsNeeded).Msg("Dry run capacity check")
+			if estimatedBitsNeeded > totalBitsAvailable {
+				return fmt.Errorf("image is too small: needed ~%d bits, available %d bits", estimatedBitsNeeded, totalBitsAvailable)
+			}
+			log.Info().Msg("✅ Image has sufficient capacity for this message")
+			return nil
+		}
+	} else if args.DryRun != nil && *args.DryRun {
+		log.Info().Int("available_bits", totalBitsAvailable).Msg("Dry run capacity check (input size unknown)")
+		log.Info().Msg("✅ Image capacity calculated. Input size unknown (stream), skipping size check.")
 		return nil
 	}
 
@@ -1353,4 +1364,20 @@ func decompressData(data []byte) ([]byte, error) {
 	res, err := io.ReadAll(r)
 	r.Close()
 	return res, err
+}
+
+// GetCapacity calculates the maximum number of bits that can be hidden in an image
+// with the given dimensions and settings.
+func GetCapacity(width, height, channels, bits int, strategy string) int {
+	if strategy == "dct" {
+		// DCT implementation uses 8x8 blocks.
+		// It skips the first row of blocks (y=0) for the header.
+		blocksW := width / 8
+		blocksH := height / 8
+		if blocksH <= 1 {
+			return 0
+		}
+		return blocksW * (blocksH - 1)
+	}
+	return numBitsAvailable(width, height, channels, bits)
 }
