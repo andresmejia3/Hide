@@ -102,7 +102,7 @@ func GetInfo(imagePath string) (*Info, error) {
 		Channels:     numChannels,
 		BitDepth:     bitsPerChannel,
 		IsCompressed: isCompressed,
-		IsEncrypted:  false, // Header format does not currently store encryption status
+		IsEncrypted:  false,              // Header format does not currently store encryption status
 		DataSize:     numMessageBits / 8, // Convert bits to bytes
 	}, nil
 }

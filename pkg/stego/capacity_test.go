@@ -78,7 +78,7 @@ func TestGetCapacity(t *testing.T) {
 			strategy: "dct",
 			// 103/8 = 12 blocks wide. 99/8 = 12 blocks high.
 			// Skips first row of blocks. Capacity = 12 * (12 - 1) = 132 bits.
-			want:     132,
+			want: 132,
 		},
 		{
 			name:     "Zero Width",

@@ -1,6 +1,7 @@
 # Hide
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/andresmejia3/hide)](https://goreportcard.com/report/github.com/andresmejia3/hide)
+[![Go](https://github.com/andresmejia3/hide/actions/workflows/test.yml/badge.svg)](https://github.com/andresmejia3/hide/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/andresmejia3/hide)](https://go.dev/)
 
@@ -144,16 +145,6 @@ Generate RSA public/private key pairs for asymmetric encryption.
 
 Below is a demonstration of concealing a **64KB Lorem Ipsum PDF** into a standard PNG carrier using the default DCT strategy.
 
-**1. Conceal the data:**
-```bash
-./hide conceal -i testdata/test.jpg -f testdata/test.pdf -o output/hidden.png
-```
-
-**2. Analyze the difference:**
-```bash
-./hide analyze -s output/hidden.png -o testdata/test.jpg
-```
-
 | Original Image | Stego Image (Hidden PDF) | Difference Heatmap |
 | :---: | :---: | :---: |
 | ![Original](/assets/original.png) | ![Stego](/assets/stego.png) | ![Heatmap](/assets/heatmap.png) |
@@ -162,17 +153,9 @@ Below is a demonstration of concealing a **64KB Lorem Ipsum PDF** into a standar
 ### Analysis Results
 After running `./hide analyze -o original.png -s stego.png`, the tool generated the following metrics:
 
-```text
-Analysis Complete:
-------------------
-MSE (Mean Squared Error):       0.7741
-PSNR (Peak Signal-to-Noise):    49.24 dB       
-Heatmap saved to:               heatmap.png    
-
-Interpretation:
- > 30dB: Good quality (hard to detect visually)
- > 40dB: Excellent quality
-```
+* **MSE (Mean Squared Error):** 0.0842
+* **PSNR (Peak Signal-to-Noise Ratio):** 48.87 dB 
+    * *(Values >40dB are considered excellent quality and virtually invisible to the human eye).*
 
 
 
