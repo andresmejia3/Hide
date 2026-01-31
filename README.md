@@ -147,7 +147,7 @@ Below is a demonstration of concealing a **64KB Lorem Ipsum PDF** into a standar
 
 | Original Image | Stego Image (Hidden PDF) | Difference Heatmap |
 | :---: | :---: | :---: |
-| ![Original](/assets/original.png) | ![Stego](/assets/stego.png) | ![Heatmap](/assets/heatmap.png) |
+| ![Original](/assets/original.jpg) | ![Stego](/assets/stego.png) | ![Heatmap](/assets/heatmap.png) |
 | **Clean** | **Encrypted & Compressed** | **Modified Pixels** |
 
 ### Analysis Results
