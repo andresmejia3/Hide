@@ -69,6 +69,44 @@ func TestGetCapacity(t *testing.T) {
 			strategy: "dct",
 			want:     2, // 2 * (2-1) = 2 bits
 		},
+		{
+			name:     "DCT Non-Divisible Dimensions",
+			width:    103,
+			height:   99,
+			channels: 3,
+			bits:     1,
+			strategy: "dct",
+			// 103/8 = 12 blocks wide. 99/8 = 12 blocks high.
+			// Skips first row of blocks. Capacity = 12 * (12 - 1) = 132 bits.
+			want:     132,
+		},
+		{
+			name:     "Zero Width",
+			width:    0,
+			height:   100,
+			channels: 3,
+			bits:     1,
+			strategy: "lsb",
+			want:     0,
+		},
+		{
+			name:     "Negative Bits (Invalid)",
+			width:    100,
+			height:   100,
+			channels: 3,
+			bits:     -1,
+			strategy: "lsb",
+			want:     0,
+		},
+		{
+			name:     "Large Image LSB",
+			width:    4000,
+			height:   3000,
+			channels: 3,
+			bits:     2,
+			strategy: "lsb",
+			want:     72000000, // 4000 * 3000 * 3 * 2
+		},
 	}
 
 	for _, tt := range tests {
