@@ -5,7 +5,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/andresmejia3/hide)](https://go.dev/)
 
-**Hide** is a high-performance, production-grade steganography tool engineered in Go. It securely conceals data within images using advanced encoding strategies, military-grade encryption, and fault-tolerant error correction.
+**Hide** is a steganography tool written in Go. It conceals files inside images using three embedding strategies, authenticated encryption (AES-256-GCM or RSA-OAEP hybrid), and Reed-Solomon error correction.
 
 Unlike simple LSB tools, **Hide** is built for reliability and security, featuring Reed-Solomon error correction to handle data corruption and support for both symmetric (AES) and asymmetric (RSA) encryption.
 
@@ -14,20 +14,20 @@ Unlike simple LSB tools, **Hide** is built for reliability and security, featuri
 *   **Multiple Encoding Strategies**:
     *   **LSB (Least Significant Bit)**: High capacity, standard steganography.
     *   **LSB Matching**: Improved security against statistical analysis (histogram attacks).
-    *   **DCT (Discrete Cosine Transform)**: Embeds data in the frequency domain, offering robustness against minor image alterations.
+    *   **DCT (Discrete Cosine Transform)**: Embeds 1 bit per 8×8 block in the frequency domain, spreading changes across the block for lower visual impact.
 *   **Strong Encryption**:
     *   **AES-256**: Encrypt messages with a passphrase.
     *   **RSA**: Asymmetric encryption using public/private keys for secure message sharing.
 *   **Reliability**:
-    *   **Reed-Solomon Error Correction**: Automatically adds parity data to recover messages even if parts of the image are corrupted.
+    *   **Reed-Solomon Error Correction**: Splits each chunk into 4 data + 2 parity shards with a CRC32 per shard, so up to 2 damaged shards per chunk are detected and rebuilt.
     *   **Compression**: Automatically compresses data (Zlib) before embedding to maximize storage space.
 *   **Analysis Tools**:
     *   **Capacity Calculator**: Check exactly how much data fits in an image before starting.
     *   **Steganalysis**: Compare original and stego images to calculate PSNR (Peak Signal-to-Noise Ratio) and generate difference heatmaps.
-    *   **Integrity Verification**: Verify hidden messages without fully extracting them.
+    *   **Integrity Verification**: Check every shard of a hidden payload without decrypting or writing it out.
 *   **Performance**: Uses concurrent processing for computationally intensive tasks like DCT embedding.
 *   **Stealth Engineering**:
-    *   **HVS Optimization**: Exploits the Human Visual System's low sensitivity to the blue color spectrum. When operating in single-channel mode, **Hide** automatically targets the Blue channel to ensure that data embedding creates the least amount of visible noise.
+    *   **HVS Optimization**: The DCT strategy embeds only in the Blue channel, which the human eye resolves least sharply, so changes are harder to see.
 
 ## Table of Contents
 
@@ -36,6 +36,7 @@ Unlike simple LSB tools, **Hide** is built for reliability and security, featuri
 - [Usage](#usage)
 - [Visual Demo](#visual-demo)
 - [Strategies Explained](#strategies-explained)
+- [Limitations](#limitations)
 - [Testing](#testing)
 - [License](#license)
 
@@ -143,7 +144,7 @@ Generate RSA public/private key pairs for asymmetric encryption.
 
 ## Visual Demo
 
-Below is a demonstration of concealing a **64KB Lorem Ipsum PDF** into a standard PNG carrier using the default DCT strategy.
+Concealing an **18.8 KB PDF** (`testdata/test.pdf`) into a 7680×4320 photo using the default DCT strategy:
 
 | Original Image | Stego Image (Hidden PDF) | Difference Heatmap |
 | :---: | :---: | :---: |
@@ -151,34 +152,52 @@ Below is a demonstration of concealing a **64KB Lorem Ipsum PDF** into a standar
 | **Clean** | **Encrypted & Compressed** | **Modified Pixels** |
 
 ### Analysis Results
-After running `./hide analyze -o original.png -s stego.png`, the tool generated the following metrics:
 
-* **MSE (Mean Squared Error):** 0.0842
-* **PSNR (Peak Signal-to-Noise Ratio):** 48.87 dB 
-    * *(Values >40dB are considered excellent quality and virtually invisible to the human eye).*
+```bash
+./hide analyze -o assets/original.jpg -s assets/stego.png
+```
 
+* **MSE (Mean Squared Error):** 0.80
+* **PSNR (Peak Signal-to-Noise Ratio):** 49.08 dB *(above ~40 dB is generally considered visually indistinguishable)*
 
+### Capacity vs. Quality
+
+DCT stores 1 bit per 8×8 block of the Blue channel, so this image holds 64,680 bytes in total. That has to fit the compressed, encrypted payload plus Reed-Solomon parity. Random data cannot be compressed, so it is the worst case:
+
+| Hidden data | Stored in image | Share of DCT capacity | PSNR |
+| --- | --- | --- | --- |
+| 18.8 KB PDF (`testdata/test.pdf`) | 24,898 bytes | 38% | 49.08 dB |
+| 40 KB random bytes | 61,546 bytes | 95% | 45.30 dB |
+
+The random file is reproducible: `python3 -c "import random; random.seed(777); open('rand40k.bin','wb').write(random.randbytes(40960))"` (SHA-256 `a810358a7f23dd0f9835066aa92f02b2229e3a1fa7598a8a4ccfc3419d2fc814`).
+
+LSB uses every pixel, so it holds roughly 200× more in the same image, at the cost of being far easier to detect statistically.
 
 ### Stego Header Info
-Using `./hide info stego.png`, we can see the internal metadata used for recovery:
 
 ```text
+$ ./hide info assets/stego.png
 Stego Header Information:
 -------------------------
-Version:          1.0.0
-Strategy:         DCT (Discrete Cosine Transform)
-Encryption:       AES-256-GCM
-Compression:      Zlib (Level 6)
-Error Correction: Reed-Solomon (Parity: 10%)
-Channels:         3 (RGB)
-Payload Size:     65,536 bytes
+Strategy:         dct
+Channels Used:    1
+Bits Per Channel: 1
+Compressed:       true
+Payload Size:     24898 bytes
+```
 
 ## Strategies Explained
 
 *   **LSB (Least Significant Bit)**: Replaces the lowest bits of pixel color values. It offers the highest storage capacity but is fragile to image editing (resizing, compression).
 *   **LSB Matching**: Similar to LSB but randomly adds or subtracts 1 to match the target bit. This alters the statistical footprint less than standard replacement, making it harder to detect via histogram analysis.
-*   **DCT**: Embeds data into the frequency domain of 8x8 pixel blocks. This is computationally intensive but allows the message to potentially survive mild lossy compression or format conversion.
-*   **Adaptive Channel Selection**: To maximize stealth, the algorithms default to using the Blue channel (when channel limits are applied) because the human eye has the lowest spatial resolution for blue light, making artifacts virtually invisible.
+*   **DCT**: Embeds data into the frequency domain of 8x8 pixel blocks. The quantization step adapts to each block's texture, and each write is re-checked after rounding to 8-bit pixels.
+*   **Blue-Channel Embedding (DCT)**: DCT embeds only in the Blue channel, because the human eye has the lowest spatial resolution for blue light.
+
+## Limitations
+
+*   **Output must stay lossless (PNG).** The header is stored in pixel LSBs, so any lossy re-save, even JPEG at quality 100, destroys it. JPEG covers work fine as *input*. `TestJPEGCompressionResilience` in `pkg/stego/stego_test.go` asserts this behaviour.
+*   **Reed-Solomon recovers up to 2 damaged shards per chunk.** Damage spread across more shards (for example, scattered bit flips when a passphrase randomizes pixel order) cannot be rebuilt and is reported as an error.
+*   **Hidden data is encrypted, but its presence is not hidden from someone who knows the tool,** because the header layout is fixed.
 
 ## Testing
 

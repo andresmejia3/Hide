@@ -203,9 +203,9 @@ func TestEndToEndSteganographyDCT(t *testing.T) {
 	outputPath := filepath.Join(tmpDir, "output_dct.png")
 
 	// Create dummy image (needs to be large enough for 8x8 blocks)
-	// 200x200 = 625 blocks.
-	// 200x200 image for DCT blocks.
-	img := image.NewNRGBA(image.Rect(0, 0, 200, 200))
+	// 232x232 = 29x29 blocks (first row reserved for the header).
+	// Sized to fit the payload plus Reed-Solomon parity and per-shard CRCs.
+	img := image.NewNRGBA(image.Rect(0, 0, 232, 232))
 	if _, err := rand.Read(img.Pix); err != nil {
 		t.Fatalf("Failed to create random image: %v", err)
 	}
@@ -703,9 +703,9 @@ func TestDCTImageCharacteristics(t *testing.T) {
 
 func TestNonMultipleDimensions(t *testing.T) {
 	// 103x103 pixels. DCT should handle the boundary correctly (ignoring last 7 pixels).
-	// Increased to 203x203 to ensure sufficient capacity for DCT with RS overhead
-	runEndToEndTest(t, "dct", 203, 203, 3, 1, "OddSize")
-	runEndToEndTest(t, "lsb", 203, 203, 3, 1, "OddSize")
+	// Increased to 235x235 to ensure sufficient capacity for DCT with RS + per-shard CRC overhead
+	runEndToEndTest(t, "dct", 235, 235, 3, 1, "OddSize")
+	runEndToEndTest(t, "lsb", 235, 235, 3, 1, "OddSize")
 }
 
 func TestVerify(t *testing.T) {

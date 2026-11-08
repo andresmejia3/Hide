@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"image"
 	"image/png"
 	"io"
@@ -876,6 +877,7 @@ func Verify(args *VerifyArgs) (*VerifyResult, error) {
 			strategyID = setBit(strategyID, i)
 		}
 	}
+	strategyID = strategyID & 3 // Strip compression flag (bit 2) before reading the strategy
 
 	strategy := "lsb"
 	switch strategyID {
@@ -1301,12 +1303,23 @@ func addReedSolomon(data []byte) ([]byte, error) {
 		return nil, err
 	}
 
+	// klauspost/reedsolomon is an erasure code: it can rebuild shards it knows are
+	// missing, but it cannot find which shard is wrong. A CRC32 per shard tells
+	// removeReedSolomon which shards are damaged so they can be rebuilt.
 	var output []byte
 	for _, shard := range shards {
 		output = append(output, shard...)
+		sum := make([]byte, shardCRCSize)
+		binary.BigEndian.PutUint32(sum, crc32.ChecksumIEEE(shard))
+		output = append(output, sum...)
 	}
 	return output, nil
 }
+
+const shardCRCSize = 4
+
+// ErrTooManyCorruptShards means more shards were damaged than parity can rebuild.
+var ErrTooManyCorruptShards = errors.New("too many corrupted shards to recover")
 
 func removeReedSolomon(data []byte) ([]byte, error) {
 	enc, err := reedsolomon.New(rsDataShards, rsParityShards)
@@ -1314,14 +1327,34 @@ func removeReedSolomon(data []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	shards, err := enc.Split(data)
-	if err != nil {
-		return nil, err
+	total := rsDataShards + rsParityShards
+	if len(data) == 0 || len(data)%total != 0 {
+		return nil, errors.New("reed-solomon data has invalid length")
+	}
+	stride := len(data) / total
+	if stride <= shardCRCSize {
+		return nil, errors.New("reed-solomon shards too short")
 	}
 
-	// Verify and Reconstruct if necessary
-	if ok, _ := enc.Verify(shards); !ok {
-		if err := enc.Reconstruct(shards); err != nil {
+	shards := make([][]byte, total)
+	bad := 0
+	for i := 0; i < total; i++ {
+		block := data[i*stride : (i+1)*stride]
+		shard := block[:stride-shardCRCSize]
+		want := binary.BigEndian.Uint32(block[stride-shardCRCSize:])
+		if crc32.ChecksumIEEE(shard) != want {
+			shards[i] = nil // Mark as missing so Reconstruct rebuilds it
+			bad++
+			continue
+		}
+		shards[i] = append([]byte(nil), shard...)
+	}
+
+	if bad > rsParityShards {
+		return nil, fmt.Errorf("%w: %d of %d damaged, parity covers %d", ErrTooManyCorruptShards, bad, total, rsParityShards)
+	}
+	if bad > 0 {
+		if err := enc.ReconstructData(shards); err != nil {
 			return nil, err
 		}
 	}
